@@ -879,10 +879,10 @@ index 0000000..e313442
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..603d1eb
+index 0000000..547b5b3
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,486 @@
+@@ -0,0 +1,505 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
 + * DT-ordered KGSL clocks use branch definitions from the matching driver.
 + */
@@ -1006,6 +1006,7 @@ index 0000000..603d1eb
 +    cp_wr(gpu, 0xAE01, 1); /* A6XX_SP_ADDR_MODE_CNTL */
 +    cp_wr(gpu, 0xB601, 1); /* A6XX_TPL1_ADDR_MODE_CNTL */
 +    cp_wr(gpu, 0xBE05, 1); /* A6XX_HLSQ_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xF810, 1); /* A6XX_RBBM_SECVID_TSB_ADDR_MODE_CNTL */
 +
 +    const uint64_t sqe_iova = UINT64_C(0x100010000);
 +    const uint64_t ring_iova = UINT64_C(0x100020000);
@@ -1033,6 +1034,9 @@ index 0000000..603d1eb
 +    /* Clear scratch registers */
 +    cp_wr(gpu, 0x880, 0);
 +    cp_wr(gpu, 0x881, 0);
++    cp_wr(gpu, 0x883, 0);
++    cp_wr(gpu, 0x884, 0);
++    cp_wr(gpu, 0x885, 0);
 +
 +    /* Clear SQE_HALT to start CP engine */
 +    cp_wr(gpu, 0x808, 1);
@@ -1045,26 +1049,32 @@ index 0000000..603d1eb
 +    volatile uint32_t *rb = (volatile uint32_t *)ring;
 +    unsigned idx = 0;
 +
-+    /* Packet 0: CP_THREAD_CONTROL (concurrent binning disable) */
-+    rb[idx++] = pm4_type7(0x17, 1);
-+    rb[idx++] = 1u << 27;
++    /* Packet 0: CP_ME_INIT (opcode 0x48, 11 words payload) */
++    rb[idx++] = pm4_type7(0x48, 11);
++    rb[idx++] = 0x0000016f; /* CP_INIT_MASK: max contexts, error detect, hdr dump, reset, ucode, op mode, pwrup */
++    rb[idx++] = 0x00000003; /* 3 hardware contexts */
++    rb[idx++] = 0x20000000; /* error detection control */
++    rb[idx++] = 0x00000000; /* header dump address */
++    rb[idx++] = 0x00000000; /* header dump enable/size */
++    rb[idx++] = 0x00000000; /* ucode workaround */
++    rb[idx++] = 0x00000002; /* operation mode */
++    rb[idx++] = 0x00000000; /* pwrup reglist low */
++    rb[idx++] = 0x00000000; /* pwrup reglist high */
++    rb[idx++] = 0x00000000; /* pwrup reglist size */
++    rb[idx++] = 0x00000000; /* pad to 11 words */
 +
-+    /* Packet 1: CP_ME_INIT */
-+    rb[idx++] = pm4_type7(0x48, 7);
-+    rb[idx++] = (1u<<0)|(1u<<1)|(1u<<3)|(1u<<6)|(1u<<8);
-+    rb[idx++] = 0x00000003;
-+    rb[idx++] = 0x20000000;
-+    rb[idx++] = 0x00000002;
-+    rb[idx++] = 0;
-+    rb[idx++] = 0;
-+    rb[idx++] = 0;
++    /* Packet 1: CP_SET_PROTECTED_MODE (opcode 0x5f, 1 word: 0 = unprotect) */
++    rb[idx++] = pm4_type7(0x5f, 1);
++    rb[idx++] = 0x00000000;
 +
-+    /* Packet 2: Type 4 writing 0x1337BEEF to CP_SCRATCH_REG0 */
-+    rb[idx++] = pm4_type4(0x880, 1);
++    /* Packet 2: Type 4 writing to A6xx scratch registers (0x883..0x884) */
++    rb[idx++] = pm4_type4(0x883, 2);
 +    rb[idx++] = 0x1337BEEF;
++    rb[idx++] = 0xFEEDCAFE;
 +
-+    /* Packet 3: Type 4 writing 0xFEEDCAFE to CP_SCRATCH_REG1 */
-+    rb[idx++] = pm4_type4(0x881, 1);
++    /* Packet 3: Type 4 writing to legacy/A5xx scratch registers (0x880..0x881) */
++    rb[idx++] = pm4_type4(0x880, 2);
++    rb[idx++] = 0x1337BEEF;
 +    rb[idx++] = 0xFEEDCAFE;
 +
 +    /* Clean cache for ring buffer */
@@ -1082,11 +1092,20 @@ index 0000000..603d1eb
 +
 +    /* Poll for execution */
 +    for (unsigned poll = 0; poll < 3000; ++poll) {
-+        r->cp_scratch0 = cp_rd(gpu, 0x880);
-+        r->cp_scratch1 = cp_rd(gpu, 0x881);
++        uint32_t s0_883 = cp_rd(gpu, 0x883);
++        uint32_t s1_884 = cp_rd(gpu, 0x884);
++        uint32_t s0_880 = cp_rd(gpu, 0x880);
++        uint32_t s1_881 = cp_rd(gpu, 0x881);
 +        r->cp_rptr = cp_rd(gpu, 0x806);
 +        r->cp_status1 = cp_rd(gpu, 0x825);
-+        if (r->cp_scratch0 == 0x1337BEEFu && r->cp_scratch1 == 0xFEEDCAFEu) break;
++        if (s0_883 == 0x1337BEEFu || s0_880 == 0x1337BEEFu) {
++            r->cp_scratch0 = (s0_883 == 0x1337BEEFu) ? s0_883 : s0_880;
++            r->cp_scratch1 = (s0_883 == 0x1337BEEFu) ? s1_884 : s1_881;
++            break;
++        }
++        r->cp_scratch0 = s0_883 ? s0_883 : s0_880;
++        r->cp_scratch1 = s1_884 ? s1_884 : s1_881;
++        if (r->cp_rptr == r->cp_wptr) break;
 +        delay(100);
 +    }
 +
