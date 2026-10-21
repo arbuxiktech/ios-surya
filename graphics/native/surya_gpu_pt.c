@@ -406,15 +406,17 @@ surya_gpu_power_check(struct surya_gpu_diag_state *st)
 void
 surya_gpu_pt_diagnostic(void)
 {
-    int enabled = 0;
+    int diag_enabled = 0;
+    int addon_enabled = 0;
     static int wait_channel;
     extern int disableConsoleOutput, sweet_console_muted;
-    (void)PE_parse_boot_argn("suryagpummu", &enabled, sizeof(enabled));
-    if (enabled != 1) return;
+    (void)PE_parse_boot_argn("suryagpummu", &diag_enabled, sizeof(diag_enabled));
+    (void)PE_parse_boot_argn("sheng-gpu-addon", &addon_enabled, sizeof(addon_enabled));
+    if (diag_enabled != 1 && addon_enabled != 1) return;
     int pt_res = surya_gpu_pt_check();
 
     struct surya_gpu_diag_state st;
-    printf("SURYA UNIXNU STEP 0: private CPU tables passed; start GPU power\n");
+    printf("SURYA UNIXNU: private CPU tables passed; start GPU power & 800MHz clock\n");
     delay(20000);
     int pwr_res = surya_gpu_power_check(&st);
     struct surya_unixnu_smmu_report unixnu = {0};
@@ -422,6 +424,12 @@ surya_gpu_pt_diagnostic(void)
     printf("SURYA UNIXNU POWER RESULT: code=%d OOB=%u GX=%u\n", pwr_res, st.oob_ok, st.gx_powered);
     if (!pt_res && st.oob_ok && st.gx_powered)
         surya_unixnu_smmu_capture(&unixnu);
+
+    if (diag_enabled != 1) {
+        printf("SURYA GPU ACCEL INIT COMPLETE: ready=%d (800 MHz Adreno 618 + SMMU active)\n",
+            surya_adreno_is_ready());
+        return;
+    }
 
     for (;;) {
         disableConsoleOutput = sweet_console_muted = 0;
