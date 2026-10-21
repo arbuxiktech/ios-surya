@@ -9,6 +9,18 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Hardware Verification: Milestone 7 PASSED (2026-10-21)
+
+Physical hardware verification confirmed on real Poco X3 NFC in boot photo `52ae1b13`:
+- Command Processor (CP) SQE microcode executed PM4 packets successfully.
+- `WPTR=20`, `RPTR=20`: RPTR advanced fully matching WPTR, confirming ring buffer completion.
+- `SCR0=0x1337beef`: Type 4 PM4 packet wrote 0x1337BEEF to scratch register 0.
+- `SCR1=0xfeedcafe`: Type 4 PM4 packet wrote 0xFEEDCAFE to scratch register 1.
+- `STAT1=0x1000000`: CP ring execution idle after draining ring buffer.
+- Live console confirmation displayed: `SURYA GPU ACCELERATION: VERIFIED (A618 CP EXECUTED PM4 PACKETS)`.
+- Android v2 Boot Image SHA256: `138b1eae1fdeb9699cbee0517f6fcf4c4e96654fc87f93458bb74273f6199489`.
+- Milestone 7 is 100% COMPLETE. Moving to Milestone 8: UniXNU NativeAdreno IOKit Driver (`/arm-io/gpu`).
+
 ## Adreno 618 Isolated SQE Microcode Header Offset Boot (2026-10-21)
 
 Resolved CP INTR=0x84 (illegal instruction error at PC=0, OP=0) from photo 0cf84073 with isolated surgical fix:
