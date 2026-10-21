@@ -177,6 +177,14 @@ def build(seed=None, qemu=False, highmem=False, product_path=D22AP_ADT):
             ('compatible', cstr('sweet,display')),
             ('canvas-width', u32(1125)),
             ('canvas-height', u32(2436)),
+        ]),
+        # Adreno GPU: IOKit accelerator service matches /arm-io/gpu
+        node('gpu', [
+            ph(),
+            ('device_type', cstr('gpu')),
+            ('compatible', cstr('qcom,adreno') + cstr('qcom,adreno-618') + cstr('arm-io,gpu')),
+            ('reg', u64(0x05000000 - SOC_BASE, 0x40000)),
+            ('qcom,chipid', u32(0x06010800)),
         ])])
 
     fbcon = node('sweet-fbcon', [

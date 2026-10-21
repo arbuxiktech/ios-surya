@@ -13,9 +13,18 @@
 #include "surya_gpu_dt.h"
 #include "ArmSmmu4KProgram.h"
 #include "ArmSmmu4KStreams.h"
+#include "SuryaNativeAdrenoABI.h"
 
 extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
+
+static vm_offset_t g_surya_gpu = 0;
+static vm_offset_t g_surya_ring = 0;
+static vm_offset_t g_surya_tables = 0;
+static uint64_t g_surya_tables_pa = 0;
+static uint32_t g_surya_wptr = 0;
+static uint64_t g_surya_fence_seq = 0x1337BEEF;
+static int g_surya_ready = 0;
 
 static uint32_t read32(vm_offset_t base, unsigned off)
 {
@@ -246,6 +255,10 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
         if (s0_883 == 0x1337BEEFu || s0_880 == 0x1337BEEFu) {
             r->cp_scratch0 = (s0_883 == 0x1337BEEFu) ? s0_883 : s0_880;
             r->cp_scratch1 = (s0_883 == 0x1337BEEFu) ? s1_884 : s1_881;
+            g_surya_ready = 1;
+            g_surya_gpu = gpu;
+            g_surya_ring = ring;
+            g_surya_wptr = r->cp_wptr;
             break;
         }
         r->cp_scratch0 = s0_883 ? s0_883 : s0_880;
@@ -289,6 +302,8 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
 
     const uint64_t physical = ptoa_64(tp), data_physical = ptoa_64(dp);
     const uint64_t sqe_physical = ptoa_64(sp), ring_physical = ptoa_64(rp), rptr_physical = ptoa_64(rptp);
+    g_surya_tables = tables;
+    g_surya_tables_pa = physical;
 
     /* Check for SQE microcode in device tree */
     DTEntry chosen = NULL;
@@ -538,5 +553,116 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
         if (r->streams_attached) r->stage = 7;
         if (r->cp_scratch0 == 0x1337BEEFu) r->stage = 8;
     }
+}
+
+int surya_adreno_is_ready(void)
+{
+    return g_surya_ready;
+}
+
+int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence)
+{
+    if (!g_surya_ready || !g_surya_ring || !g_surya_gpu) return 1;
+    volatile uint32_t *rb = (volatile uint32_t *)g_surya_ring;
+    uint32_t w = g_surya_wptr;
+    if (w + 16 >= 4096) w = 0;
+
+    /* Indirect buffer packet: Type 7, opcode 0x3f (CP_INDIRECT_BUFFER), 3 dwords */
+    rb[w++] = pm4_type7(0x3f, 3);
+    rb[w++] = (uint32_t)ib_iova;
+    rb[w++] = (uint32_t)(ib_iova >> 32);
+    rb[w++] = dwords;
+
+    /* Fence update packet: Type 4 writing monotonic sequence to scratch reg 0x883 */
+    g_surya_fence_seq++;
+    if (fence) *fence = g_surya_fence_seq;
+    rb[w++] = pm4_type4(0x883, 1);
+    rb[w++] = (uint32_t)g_surya_fence_seq;
+
+    /* Clean cache to PoC */
+    for (uintptr_t p = (uintptr_t)g_surya_ring; p < (uintptr_t)g_surya_ring + 16384; p += 64) {
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb sy; isb" ::: "memory");
+
+    g_surya_wptr = w;
+    cp_wr(g_surya_gpu, 0x807, g_surya_wptr);
+    return 0;
+}
+
+int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns)
+{
+    if (!g_surya_gpu) return 1;
+    uint64_t max_us = timeout_ns ? (timeout_ns / 1000) : 500000ULL;
+    uint64_t elapsed = 0;
+    while (elapsed < max_us) {
+        uint32_t cur = cp_rd(g_surya_gpu, 0x883);
+        if (cur >= (uint32_t)fence) return 0;
+        delay(50);
+        elapsed += 50;
+    }
+    return (cp_rd(g_surya_gpu, 0x883) >= (uint32_t)fence) ? 0 : 1;
+}
+
+uint64_t surya_adreno_cp_get_timestamp(void)
+{
+    if (!g_surya_gpu) return 0;
+    return (uint64_t)cp_rd(g_surya_gpu, 0x883);
+}
+
+int surya_adreno_smmu_map(uint64_t iova, uint64_t pa, size_t bytes, uint32_t perms)
+{
+    if (!g_surya_tables) return 1;
+    uint64_t *tbl = (uint64_t *)g_surya_tables;
+    size_t pages = (bytes + 4095) / 4096;
+    uint64_t attrs = UINT64_C(0x00e0000000000003); /* Inner Shareable, Normal WB */
+    if (!(perms & ArmSmmu4KWrite)) attrs |= (UINT64_C(1) << 7);
+
+    for (size_t i = 0; i < pages; ++i) {
+        uint64_t va = iova + (i * 4096);
+        uint64_t curr_pa = pa + (i * 4096);
+        unsigned l3_idx = (unsigned)((va >> 12) & 511);
+        tbl[3 * 512 + l3_idx] = (curr_pa & UINT64_C(0x0000fffffffff000)) | attrs;
+    }
+    for (uintptr_t p = (uintptr_t)g_surya_tables; p < (uintptr_t)g_surya_tables + 16384; p += 64) {
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb sy; isb" ::: "memory");
+    return 0;
+}
+
+int surya_adreno_smmu_unmap(uint64_t iova, size_t bytes)
+{
+    if (!g_surya_tables) return 1;
+    uint64_t *tbl = (uint64_t *)g_surya_tables;
+    size_t pages = (bytes + 4095) / 4096;
+    for (size_t i = 0; i < pages; ++i) {
+        uint64_t va = iova + (i * 4096);
+        unsigned l3_idx = (unsigned)((va >> 12) & 511);
+        tbl[3 * 512 + l3_idx] = 0;
+    }
+    for (uintptr_t p = (uintptr_t)g_surya_tables; p < (uintptr_t)g_surya_tables + 16384; p += 64) {
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
+    }
+    __asm__ volatile("dsb sy; isb" ::: "memory");
+    return 0;
+}
+
+void surya_adreno_get_device_info(void *info_ptr)
+{
+    struct NativeAdrenoAbiDeviceInfo *info = (struct NativeAdrenoAbiDeviceInfo *)info_ptr;
+    if (!info) return;
+    bzero(info, sizeof(*info));
+    info->chip_id = 0x06010800;
+    info->gmem_bytes = 512 * 1024;
+    info->gmem_base = 0x100000;
+    info->uche_trap_base = 0;
+    info->va_start = UINT64_C(0x100000000);
+    info->va_size = UINT64_C(0x100000000);
+    info->highest_bank_bit = 14;
+    info->ubwc_swizzle = 0;
+    info->macrotile_mode = 0;
+    info->ubwc_version = 2;
+    info->flags = NativeAdrenoDeviceClientIova;
 }
 #endif

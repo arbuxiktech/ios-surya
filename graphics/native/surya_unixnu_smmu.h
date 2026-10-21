@@ -36,4 +36,21 @@ surya_unixnu_cb0(uint32_t id1, size_t bytes, uint32_t *offset)
 }
 
 void surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *);
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int surya_adreno_is_ready(void);
+int surya_adreno_smmu_map(uint64_t iova, uint64_t pa, size_t bytes, uint32_t perms);
+int surya_adreno_smmu_unmap(uint64_t iova, size_t bytes);
+int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence);
+int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns);
+uint64_t surya_adreno_cp_get_timestamp(void);
+void surya_adreno_get_device_info(void *info_ptr);
+
+#ifdef __cplusplus
+}
+#endif
+
 #endif

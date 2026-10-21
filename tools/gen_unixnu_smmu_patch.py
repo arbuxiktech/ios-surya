@@ -24,6 +24,7 @@ def generate():
         vendor / 'ArmSmmu4KContext.h', vendor / 'ArmSmmu4KContext.c',
         vendor / 'ArmSmmu4KProgram.h', vendor / 'ArmSmmu4KProgram.c',
         vendor / 'ArmSmmu4KStreams.h', vendor / 'ArmSmmu4KStreams.c',
+        ROOT / 'graphics/native/SuryaNativeAdrenoABI.h',
         ROOT / 'graphics/native/surya_unixnu_smmu.h',
         ROOT / 'graphics/native/surya_unixnu_smmu.c')]
     # Preserve the upstream MIT notice inside the source patch as well.

@@ -835,12 +835,183 @@ index 0000000..4450fdf
 +    if(quarantine(io,s,s->count,r)){s->poisoned=1;s->attached=0;return ArmSmmu4KIoError;}
 +    s->attached=0;r->phase=7;return ArmSmmu4KSuccess;
 +}
+diff --git a/bsd/dev/SuryaNativeAdrenoABI.h b/bsd/dev/SuryaNativeAdrenoABI.h
+new file mode 100644
+index 0000000..3ca23cd
+--- /dev/null
++++ b/bsd/dev/SuryaNativeAdrenoABI.h
+@@ -0,0 +1,165 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef NATIVE_ADRENO_ABI_H
++#define NATIVE_ADRENO_ABI_H
++#include <stdint.h>
++
++/* Versioned kernel/user-client wire ABI for the native Adreno driver. This is
++ * NOT the Metal, IOKit or Turnip ABI and it does not describe an ioctl. The
++ * IOKit service will copy exactly these fixed-size records across its external
++ * methods. All fields are little endian; both participants are ARM64. Every
++ * array is inside one fixed record so a caller cannot pass a length that
++ * disagrees with the storage. Unknown versions, methods and flags are refused
++ * rather than ignored. */
++enum {
++    NativeAdrenoAbiVersion = 1,
++    NativeAdrenoAbiMaxBuffers = 16,
++    NativeAdrenoAbiMaxBoBytesShift = 28, /* 256MiB per object */
++    NativeAdrenoMethodQuery = 1,
++    NativeAdrenoMethodBoAlloc = 2,
++    NativeAdrenoMethodBoMap = 3,
++    NativeAdrenoMethodBoFree = 4,
++    NativeAdrenoMethodSubmit = 5,
++    NativeAdrenoMethodWaitFence = 6,
++    NativeAdrenoMethodGetTimestamp = 7,
++    NativeAdrenoMethodGetStatus = 8,
++    NativeAdrenoMethodSetMetadata = 9,
++    NativeAdrenoMethodGetMetadata = 10,
++    NativeAdrenoMethodCreateQueue = 11,
++    NativeAdrenoMethodCloseQueue = 12,
++    NativeAdrenoMethodBoCpuMap = 13,
++    NativeAdrenoMethodBoCpuUnmap = 14,
++    NativeAdrenoMethodGetDeviceInfo = 15,
++    NativeAdrenoMethodBoImport = 16,
++    NativeAdrenoAbiMetadataBytes = 64,
++    NativeAdrenoAbiMaxQueues = 8
++};
++struct NativeAdrenoAbiParams {
++    uint32_t abi_version;
++    uint32_t input_bits;          /* GPU VA bits below 2^input_bits */
++    uint32_t output_bits;         /* physical address bits */
++    uint32_t flags;               /* NativeAdrenoParamsHostImport or zero */
++    uint64_t max_bo_bytes;
++};
++enum {
++    NativeAdrenoParamsHostImport = 1  /* BoImport pins the caller's own pages (an IOSurface's) as a BO */
++};
++struct NativeAdrenoAbiBoAlloc {
++    uint64_t bytes;               /* 4KiB multiple, <= max_bo_bytes */
++    uint32_t align_log2;          /* 12..24 */
++    uint32_t contiguous;          /* 1 requires one raw physical span */
++};
++struct NativeAdrenoAbiBoAllocReply {
++    uint64_t handle;              /* opaque to userspace, nonzero */
++};
++/* Pins [address, address + bytes) of the CALLING task and makes it a BO (reply: NativeAdrenoAbiBoAllocReply). The pages stay wired
++ * until BoFree; they keep the caller's own CPU mapping and cache mode, so the caller cleans its caches before GPU use and invalidates
++ * them after GPU writes (the GPU maps them non-cacheable). An imported BO has no CPU-map token. */
++struct NativeAdrenoAbiBoImport {
++    uint64_t address;             /* 4KiB aligned */
++    uint64_t bytes;               /* 4KiB multiple, <= max_bo_bytes */
++};
++struct NativeAdrenoAbiBoMap {
++    uint64_t handle;
++    uint64_t iova;                /* 4KiB aligned, inside the mounted aperture */
++    uint32_t permissions;         /* bit0 read, bit1 write; read required */
++    uint32_t writeback;           /* 0 normal non-coherent, 1 WB/WA */
++    uint32_t shareability;        /* 2 outer, 3 inner */
++    uint32_t reserved;            /* zero */
++};
++struct NativeAdrenoAbiBoMapReply {
++    uint64_t iova;
++};
++struct NativeAdrenoAbiBoFree {
++    uint64_t handle;
++};
++struct NativeAdrenoAbiSubmitBuffer {
++    uint64_t handle;
++    uint64_t iova;
++    uint64_t bytes;               /* 4-byte multiple, dword count = bytes/4 */
++};
++struct NativeAdrenoAbiSubmit {
++    uint32_t buffer_count;        /* 1..NativeAdrenoAbiMaxBuffers */
++    uint32_t reserved;            /* zero */
++    uint64_t queue;               /* open queue; 0 is created by open() */
++    uint64_t wait_fence;          /* zero or an earlier fence of this client */
++    uint64_t wait_timeout_ns;     /* used only when wait_fence is nonzero */
++    NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
++};
++struct NativeAdrenoAbiMetadata {
++    uint64_t handle;              /* object identity */
++    uint32_t bytes;               /* set: length; get: requested capacity */
++    uint32_t reserved;            /* zero */
++    char text[NativeAdrenoAbiMetadataBytes]; /* raw bytes, not NUL terminated */
++};
++struct NativeAdrenoAbiSubmitReply {
++    uint64_t fence;               /* nonzero CP timestamp value */
++};
++struct NativeAdrenoAbiWaitFence {
++    uint64_t fence;
++    uint64_t timeout_ns;          /* 0 polls once */
++};
++struct NativeAdrenoAbiTimestamp {
++    uint64_t ticks;               /* GPU always-on counter value */
++};
++struct NativeAdrenoAbiBoCpuMap {
++    uint64_t handle;
++};
++struct NativeAdrenoAbiBoCpuMapReply {
++    uint32_t token;               /* clientMemoryForType selector */
++    uint32_t reserved;            /* zero */
++    uint64_t bytes;               /* bytes the mapping covers */
++};
++struct NativeAdrenoAbiBoCpuUnmap {
++    uint64_t handle;
++    uint32_t token;               /* exactly the token returned by map */
++    uint32_t reserved;            /* zero */
++};
++struct NativeAdrenoAbiQueue {
++    uint64_t queue;               /* zero for create, an open id for close */
++};
++struct NativeAdrenoAbiQueueReply {
++    uint64_t queue;               /* nonzero id of the created queue */
++};
++struct NativeAdrenoAbiStatus {
++    uint64_t faults;              /* monotonic; change means context lost */
++    uint64_t suspends;            /* monotonic suspend/reset count */
++};
++/* Fixed facts of the mounted GPU that the Vulkan driver needs and cannot derive: all come from the board code, which takes
++ * them from the pinned sources (a6xx catalog, UBWC config, the programmed UCHE ranges), never from a guess. */
++enum {
++    NativeAdrenoDeviceClientIova = 1,     /* flags: the client chooses BO addresses (BoMap iova) */
++    NativeAdrenoDeviceCachedCoherent = 2  /* flags: unused until IO-coherent BO memory exists */
++};
++struct NativeAdrenoAbiDeviceInfo {
++    uint32_t chip_id;             /* ADRENO_CHIPID, e.g. 0x43050a01 */
++    uint32_t gmem_bytes;
++    uint64_t gmem_base;           /* UCHE GMEM window start (GPU address) */
++    uint64_t uche_trap_base;
++    uint64_t va_start;            /* first GPU address the client may map */
++    uint64_t va_size;
++    uint32_t highest_bank_bit;
++    uint32_t ubwc_swizzle;        /* bit0 level 1, bit1 level 2, bit2 level 3 */
++    uint32_t macrotile_mode;      /* 0 four channel, 1 eight channel */
++    uint32_t ubwc_version;        /* encoder version, 4 for UBWC 4.0 */
++    uint32_t flags;
++    uint32_t reserved;            /* zero */
++};
++#if defined(__cplusplus)
++static_assert(sizeof(NativeAdrenoAbiDeviceInfo) == 64, "ABI device info layout");
++static_assert(sizeof(NativeAdrenoAbiParams) == 24, "ABI params layout");
++static_assert(sizeof(NativeAdrenoAbiBoAlloc) == 16, "ABI alloc layout");
++static_assert(sizeof(NativeAdrenoAbiBoMap) == 32, "ABI map layout");
++static_assert(sizeof(NativeAdrenoAbiBoImport) == 16, "ABI import layout");
++static_assert(sizeof(NativeAdrenoAbiSubmitBuffer) == 24, "ABI buffer layout");
++static_assert(sizeof(NativeAdrenoAbiSubmit) == 416, "ABI submit layout");
++static_assert(sizeof(NativeAdrenoAbiBoCpuMap) == 8, "ABI cpu map layout");
++static_assert(sizeof(NativeAdrenoAbiBoCpuMapReply) == 16, "ABI cpu map reply layout");
++static_assert(sizeof(NativeAdrenoAbiBoCpuUnmap) == 16, "ABI cpu unmap layout");
++static_assert(sizeof(NativeAdrenoAbiQueue) == 8, "ABI queue layout");
++static_assert(sizeof(NativeAdrenoAbiQueueReply) == 8, "ABI queue reply layout");
++static_assert(sizeof(NativeAdrenoAbiMetadata) == 80, "ABI metadata layout");
++static_assert(sizeof(NativeAdrenoAbiWaitFence) == 16, "ABI wait layout");
++static_assert(sizeof(NativeAdrenoAbiTimestamp) == 8, "ABI timestamp layout");
++static_assert(sizeof(NativeAdrenoAbiStatus) == 16, "ABI status layout");
++#endif
++#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.h b/bsd/dev/surya_unixnu_smmu.h
 new file mode 100644
-index 0000000..fcf9e5c
+index 0000000..1b6cd0e
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.h
-@@ -0,0 +1,39 @@
+@@ -0,0 +1,56 @@
 +/* UniXNU ArmSmmu4K integration for SURYA. Live context and stream routing. */
 +#ifndef SURYA_UNIXNU_SMMU_H
 +#define SURYA_UNIXNU_SMMU_H
@@ -879,13 +1050,30 @@ index 0000000..fcf9e5c
 +}
 +
 +void surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *);
++
++#ifdef __cplusplus
++extern "C" {
++#endif
++
++int surya_adreno_is_ready(void);
++int surya_adreno_smmu_map(uint64_t iova, uint64_t pa, size_t bytes, uint32_t perms);
++int surya_adreno_smmu_unmap(uint64_t iova, size_t bytes);
++int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence);
++int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns);
++uint64_t surya_adreno_cp_get_timestamp(void);
++void surya_adreno_get_device_info(void *info_ptr);
++
++#ifdef __cplusplus
++}
++#endif
++
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..554ef1b
+index 0000000..24d5ab1
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,542 @@
+@@ -0,0 +1,668 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
 + * DT-ordered KGSL clocks use branch definitions from the matching driver.
 + */
@@ -901,9 +1089,18 @@ index 0000000..554ef1b
 +#include "surya_gpu_dt.h"
 +#include "ArmSmmu4KProgram.h"
 +#include "ArmSmmu4KStreams.h"
++#include "SuryaNativeAdrenoABI.h"
 +
 +extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
 +extern ppnum_t pmap_find_phys(pmap_t, addr64_t);
++
++static vm_offset_t g_surya_gpu = 0;
++static vm_offset_t g_surya_ring = 0;
++static vm_offset_t g_surya_tables = 0;
++static uint64_t g_surya_tables_pa = 0;
++static uint32_t g_surya_wptr = 0;
++static uint64_t g_surya_fence_seq = 0x1337BEEF;
++static int g_surya_ready = 0;
 +
 +static uint32_t read32(vm_offset_t base, unsigned off)
 +{
@@ -1134,6 +1331,10 @@ index 0000000..554ef1b
 +        if (s0_883 == 0x1337BEEFu || s0_880 == 0x1337BEEFu) {
 +            r->cp_scratch0 = (s0_883 == 0x1337BEEFu) ? s0_883 : s0_880;
 +            r->cp_scratch1 = (s0_883 == 0x1337BEEFu) ? s1_884 : s1_881;
++            g_surya_ready = 1;
++            g_surya_gpu = gpu;
++            g_surya_ring = ring;
++            g_surya_wptr = r->cp_wptr;
 +            break;
 +        }
 +        r->cp_scratch0 = s0_883 ? s0_883 : s0_880;
@@ -1177,6 +1378,8 @@ index 0000000..554ef1b
 +
 +    const uint64_t physical = ptoa_64(tp), data_physical = ptoa_64(dp);
 +    const uint64_t sqe_physical = ptoa_64(sp), ring_physical = ptoa_64(rp), rptr_physical = ptoa_64(rptp);
++    g_surya_tables = tables;
++    g_surya_tables_pa = physical;
 +
 +    /* Check for SQE microcode in device tree */
 +    DTEntry chosen = NULL;
@@ -1426,6 +1629,117 @@ index 0000000..554ef1b
 +        if (r->streams_attached) r->stage = 7;
 +        if (r->cp_scratch0 == 0x1337BEEFu) r->stage = 8;
 +    }
++}
++
++int surya_adreno_is_ready(void)
++{
++    return g_surya_ready;
++}
++
++int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence)
++{
++    if (!g_surya_ready || !g_surya_ring || !g_surya_gpu) return 1;
++    volatile uint32_t *rb = (volatile uint32_t *)g_surya_ring;
++    uint32_t w = g_surya_wptr;
++    if (w + 16 >= 4096) w = 0;
++
++    /* Indirect buffer packet: Type 7, opcode 0x3f (CP_INDIRECT_BUFFER), 3 dwords */
++    rb[w++] = pm4_type7(0x3f, 3);
++    rb[w++] = (uint32_t)ib_iova;
++    rb[w++] = (uint32_t)(ib_iova >> 32);
++    rb[w++] = dwords;
++
++    /* Fence update packet: Type 4 writing monotonic sequence to scratch reg 0x883 */
++    g_surya_fence_seq++;
++    if (fence) *fence = g_surya_fence_seq;
++    rb[w++] = pm4_type4(0x883, 1);
++    rb[w++] = (uint32_t)g_surya_fence_seq;
++
++    /* Clean cache to PoC */
++    for (uintptr_t p = (uintptr_t)g_surya_ring; p < (uintptr_t)g_surya_ring + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    __asm__ volatile("dsb sy; isb" ::: "memory");
++
++    g_surya_wptr = w;
++    cp_wr(g_surya_gpu, 0x807, g_surya_wptr);
++    return 0;
++}
++
++int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns)
++{
++    if (!g_surya_gpu) return 1;
++    uint64_t max_us = timeout_ns ? (timeout_ns / 1000) : 500000ULL;
++    uint64_t elapsed = 0;
++    while (elapsed < max_us) {
++        uint32_t cur = cp_rd(g_surya_gpu, 0x883);
++        if (cur >= (uint32_t)fence) return 0;
++        delay(50);
++        elapsed += 50;
++    }
++    return (cp_rd(g_surya_gpu, 0x883) >= (uint32_t)fence) ? 0 : 1;
++}
++
++uint64_t surya_adreno_cp_get_timestamp(void)
++{
++    if (!g_surya_gpu) return 0;
++    return (uint64_t)cp_rd(g_surya_gpu, 0x883);
++}
++
++int surya_adreno_smmu_map(uint64_t iova, uint64_t pa, size_t bytes, uint32_t perms)
++{
++    if (!g_surya_tables) return 1;
++    uint64_t *tbl = (uint64_t *)g_surya_tables;
++    size_t pages = (bytes + 4095) / 4096;
++    uint64_t attrs = UINT64_C(0x00e0000000000003); /* Inner Shareable, Normal WB */
++    if (!(perms & ArmSmmu4KWrite)) attrs |= (UINT64_C(1) << 7);
++
++    for (size_t i = 0; i < pages; ++i) {
++        uint64_t va = iova + (i * 4096);
++        uint64_t curr_pa = pa + (i * 4096);
++        unsigned l3_idx = (unsigned)((va >> 12) & 511);
++        tbl[3 * 512 + l3_idx] = (curr_pa & UINT64_C(0x0000fffffffff000)) | attrs;
++    }
++    for (uintptr_t p = (uintptr_t)g_surya_tables; p < (uintptr_t)g_surya_tables + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    __asm__ volatile("dsb sy; isb" ::: "memory");
++    return 0;
++}
++
++int surya_adreno_smmu_unmap(uint64_t iova, size_t bytes)
++{
++    if (!g_surya_tables) return 1;
++    uint64_t *tbl = (uint64_t *)g_surya_tables;
++    size_t pages = (bytes + 4095) / 4096;
++    for (size_t i = 0; i < pages; ++i) {
++        uint64_t va = iova + (i * 4096);
++        unsigned l3_idx = (unsigned)((va >> 12) & 511);
++        tbl[3 * 512 + l3_idx] = 0;
++    }
++    for (uintptr_t p = (uintptr_t)g_surya_tables; p < (uintptr_t)g_surya_tables + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    __asm__ volatile("dsb sy; isb" ::: "memory");
++    return 0;
++}
++
++void surya_adreno_get_device_info(void *info_ptr)
++{
++    struct NativeAdrenoAbiDeviceInfo *info = (struct NativeAdrenoAbiDeviceInfo *)info_ptr;
++    if (!info) return;
++    bzero(info, sizeof(*info));
++    info->chip_id = 0x06010800;
++    info->gmem_bytes = 512 * 1024;
++    info->gmem_base = 0x100000;
++    info->uche_trap_base = 0;
++    info->va_start = UINT64_C(0x100000000);
++    info->va_size = UINT64_C(0x100000000);
++    info->highest_bank_bit = 14;
++    info->ubwc_swizzle = 0;
++    info->macrotile_mode = 0;
++    info->ubwc_version = 2;
++    info->flags = NativeAdrenoDeviceClientIova;
 +}
 +#endif
 diff --git a/bsd/dev/ArmSmmu4K.LICENSE b/bsd/dev/ArmSmmu4K.LICENSE
