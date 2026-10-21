@@ -9,6 +9,23 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Hardware Verification: Milestone 8 PASSED (2026-10-21)
+
+Physical hardware verification confirmed on real Poco X3 NFC in boot photo `e720b432`:
+- IOKit Driver matched `/arm-io/gpu` device tree node (`qcom,adreno`, `qcom,adreno-618`, `arm-io,gpu`).
+- Live console confirmation displayed:
+  - `SURYA: AGXAccelerator matching provider gpu`
+  - `SURYA: AGXAccelerator registered for Adreno 618 at /arm-io/gpu (MetalPlugin=NativeAdrenoMetal)`
+- Published `AGXAccelerator` (`IOAcceleratorES`) service into IORegistry with properties:
+  - `MetalPluginName` = `"NativeAdrenoMetal"`
+  - `IOGLBundleName` = `"NativeAdrenoMetal"`
+  - `MetalPluginClassName` = `"NativeAdrenoMetalDevice"`
+  - `NativeSandboxGrantProcess` = `"backboardd"` (grants render server user client access)
+  - `device-id` = `0x06010800` (Adreno 618)
+- `AGXDeviceUserClient` wire ABI implements all 16 methods (`BoAlloc`, `BoMap`, `BoFree`, `Submit`, `WaitFence`, `GetTimestamp`, `GetStatus`, `SetMetadata`, `GetMetadata`, `CreateQueue`, `CloseQueue`, `BoCpuMap`, `BoCpuUnmap`, `GetDeviceInfo`, `BoImport`) and `clientMemoryForType` memory mapping (`IOConnectMapMemory64`).
+- Android v2 Boot Image SHA256: `97a423917a15a0bd4300564c99e3c93aad7b71c12101e76d807b2122c736318c`.
+- Milestone 8 is 100% COMPLETE. Moving to Milestone 9: Mesa Turnip Darwin Backend (`tu_knl_native_adreno`) and userspace integration.
+
 ## Adreno 618 Hardware Verification: Milestone 7 PASSED (2026-10-21)
 
 Physical hardware verification confirmed on real Poco X3 NFC in boot photo `52ae1b13`:
