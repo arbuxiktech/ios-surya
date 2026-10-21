@@ -9,6 +9,20 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## SMMUv2 S2CR Fault Mask & Continue-After-Fault Configuration (2026-10-21)
+
+Masked S2CR fault mode in ArmSmmu4KStreams to check `(s2cr & (3u << 16)) != FAULT` instead of whole-word equality.
+Qualcomm SMMUv2 (SM7150) reports CBNDX=0xFF on fault mode writes (`0x200ff`), which previously caused `ArmSmmu4KBusy` (status 10).
+Updated CB0 policy in surya_unixnu_smmu.c to `stall_on_fault = 0, continue_after_fault = 1` matching UniXNU's NativeAdrenoSmmuContext.cpp.
+All 59 unit tests and 368 upstream tests in test_streams.c pass.
+Commit d94d7ab; CI 39620411178 passed.
+Verified kernel SHA256 77201897eea446f89d9eb4828e62cb5b377bfdfe054eef0ffb7c591455d81e47.
+Image research/unixnu-stream-attach-ready/boot-unixnu-smmu.img, 20246528 bytes,
+SHA256 9dc626b4152fd84d86b57356e138eeb4538714ef5783c236ddf2f46e17108c53.
+Verified CI checksum, ARM64, live CB0 / stream markers, exact payload/firmware/board profile.
+Temporary boot accepted: Sending 0.487s / Booting 5.093s exit 0. No partition flash.
+Awaiting owner screen photo confirming STEP 12-15 stream 0 attachment (ATTACHED) and SMMU status stage=7 code=0.
+
 ## SMMUv2 Live Context Bank 0 Activation & Stream Attachment (2026-10-20)
 
 Advancing to Milestone 6 following photo 3c51568c confirmation.
