@@ -87,10 +87,12 @@ static int
 surya_mkdir(proc_t p, user_addr_t scratch, const char *path, int mode)
 {
     struct mkdir_args req;
+    int32_t retval = 0;
+    int err;
+
     req.path = scratch + 0x1000;
     req.mode = mode;
-    int32_t retval = 0;
-    int err = copyout(path, req.path, strlen(path) + 1);
+    err = copyout(path, req.path, strlen(path) + 1);
     if (err) return err;
     return mkdir(p, &req, &retval);
 }
@@ -113,8 +115,10 @@ static void
 surya_mkdir_parent(proc_t p, user_addr_t scratch, const char *path)
 {
     char buf[512];
+    char *slash;
+
     strlcpy(buf, path, sizeof(buf));
-    char *slash = strrchr(buf, '/');
+    slash = strrchr(buf, '/');
     if (slash && slash != buf) {
         *slash = '\\0';
         surya_mkdir_p(p, scratch, buf);
@@ -127,12 +131,14 @@ surya_write_file(proc_t p, const char *path, const void *data, uint64_t size, in
     vfs_context_t ctx = vfs_context_current();
     vnode_t vp = NULLVP;
     int fmode = 0x0601; /* O_CREAT | O_WRONLY | O_TRUNC */
-    int error = vnode_open(path, fmode, mode, 0, &vp, ctx);
+    int error;
+    int aresid = 0;
+
+    error = vnode_open(path, fmode, mode, 0, &vp, ctx);
     if (error) {
         printf("SURYA GPU ADDON: vnode_open('%s') failed: %d\\n", path, error);
         return error;
     }
-    int aresid = 0;
     error = vn_rdwr(UIO_WRITE, vp, (caddr_t)data, (int)size, 0, UIO_SYSSPACE, IO_NODELOCKED, vfs_context_ucred(ctx), &aresid, p);
     if (error) {
         printf("SURYA GPU ADDON: vn_rdwr('%s') failed: %d (aresid=%d)\\n", path, error, aresid);
@@ -148,28 +154,34 @@ surya_extract_tar(proc_t p, user_addr_t scratch, const uint8_t *tar, size_t tota
     unsigned count = 0;
     while (off + 512 <= total_size) {
         const struct tar_header *hdr = (const struct tar_header *)(tar + off);
+        uint64_t file_size;
+        int mode;
+        char path[512];
+        size_t plen;
+
         if (hdr->name[0] == '\\0') {
             break;
         }
-        uint64_t file_size = surya_tar_octal(hdr->size, sizeof(hdr->size));
-        int mode = (int)surya_tar_octal(hdr->mode, sizeof(hdr->mode));
+        file_size = surya_tar_octal(hdr->size, sizeof(hdr->size));
+        mode = (int)surya_tar_octal(hdr->mode, sizeof(hdr->mode));
         if (!mode) mode = 0644;
 
-        char path[512];
         if (hdr->prefix[0]) {
             snprintf(path, sizeof(path), "/private/var/%.155s/%.100s", hdr->prefix, hdr->name);
         } else {
             snprintf(path, sizeof(path), "/private/var/%.100s", hdr->name);
         }
-        size_t plen = strlen(path);
+        plen = strlen(path);
         if (plen > 1 && path[plen - 1] == '/') path[plen - 1] = '\\0';
 
         if (hdr->typeflag == '5') {
             surya_mkdir_p(p, scratch, path);
         } else if (hdr->typeflag == '0' || hdr->typeflag == '\\0') {
-            surya_mkdir_parent(p, scratch, path);
             const uint8_t *content = tar + off + 512;
-            int err = surya_write_file(p, path, content, file_size, mode);
+            int err;
+
+            surya_mkdir_parent(p, scratch, path);
+            err = surya_write_file(p, path, content, file_size, mode);
             if (!err) {
                 count++;
             }
@@ -186,6 +198,9 @@ native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const 
 {
     vnode_t probe = NULLVP;
     int error;
+    int32_t result = 0;
+    struct mount_args request;
+
     *stage = 1;
     error = vnode_lookup(source, 0, &probe, vfs_context_current());
     if (error) {
@@ -196,13 +211,12 @@ native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const 
     vnode_put(probe);
     probe = NULLVP;
     *stage = 2;
-    struct mount_args request = {
-        .type = scratch + offset,
-        .path = scratch + offset + 0x20,
-        .flags = MNT_RDONLY | MNT_UNION,
-        .data = scratch + offset + 0x100
-    };
-    int32_t result = 0;
+
+    request.type = scratch + offset;
+    request.path = scratch + offset + 0x20;
+    request.flags = MNT_RDONLY | MNT_UNION;
+    request.data = scratch + offset + 0x100;
+
     if ((error = copyout("bindfs", request.type, 7)) ||
         (error = copyout(point, request.path, point_size)) ||
         (error = copyout(source, request.data, source_size))) {
@@ -241,23 +255,30 @@ native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const 
 void
 surya_gpu_addon_prepare(proc_t p, user_addr_t scratch)
 {
+    static const char extensions_source[] = "/private/var/ngpu/addons";
+    static const char extensions_point[]  = "/System/Library/Extensions";
+    static const char daemons_source[]    = "/private/var/ngpu/daemons";
+    static const char daemons_point[]     = "/System/Library/LaunchDaemons";
+
     uint32_t enabled = 0;
+    vnode_t probe = NULLVP;
+    int error = 0;
+    DTEntry chosen;
+    void const *tar_data = NULL;
+    unsigned int tar_size = 0;
+
     if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
         return;
     }
     printf("SURYA GPU ADDON: sheng-gpu-addon=1 detected, checking /private/var/ngpu\\n");
 
-    vnode_t probe = NULLVP;
-    int error = vnode_lookup("/private/var/ngpu/addons/NativeAdrenoMetal.bundle/Info.plist", 0, &probe, vfs_context_current());
+    error = vnode_lookup("/private/var/ngpu/addons/NativeAdrenoMetal.bundle/Info.plist", 0, &probe, vfs_context_current());
     if (error == 0) {
         vnode_put(probe);
         printf("SURYA GPU ADDON: NativeAdrenoMetal.bundle already on disk\\n");
     } else {
         printf("SURYA GPU ADDON: bundle absent (err=%d), searching ADT for surya-metal-bundle\\n", error);
-        DTEntry chosen;
-        void const *tar_data = NULL;
-        unsigned int tar_size = 0;
-        if (DTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
+        if (SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
             SecureDTGetProperty(chosen, "surya-metal-bundle", &tar_data, &tar_size) == kSuccess &&
             tar_size > 0 && tar_data != NULL) {
             printf("SURYA GPU ADDON: extracting surya-metal-bundle (%u bytes)...\\n", tar_size);
@@ -266,11 +287,6 @@ surya_gpu_addon_prepare(proc_t p, user_addr_t scratch)
             printf("SURYA GPU ADDON: no surya-metal-bundle property found in /chosen\\n");
         }
     }
-
-    static const char extensions_source[] = "/private/var/ngpu/addons";
-    static const char extensions_point[]  = "/System/Library/Extensions";
-    static const char daemons_source[]    = "/private/var/ngpu/daemons";
-    static const char daemons_point[]     = "/System/Library/LaunchDaemons";
 
     native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source),
         extensions_point, sizeof(extensions_point),
