@@ -9,6 +9,23 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Pipeline Init: UCHE, ROQ, Mem Pool, Dual Stream & Unprivileged SQE (2026-10-21)
+
+Resolved CP fetch stall identified from photo 85d5baea (FSR=0x400 confirmed 0 SMMU translation/permission faults):
+- Initialized A6XX_CP_ROQ_THRESHOLDS_1 (0x8040362C), A6XX_CP_ROQ_THRESHOLDS_2 (0x010000C0), and A6XX_CP_MEM_POOL_SIZE (128) for A618.
+- Initialized A6XX_UCHE_ (filter cntl 0x804, cache ways 4, write/trap ranges).
+- Initialized A6XX_CP_AHB_CNTL (1), A6XX_RBBM_PERFCTR_CNTL (1), A6XX_RBBM_PERFCTR_GPU_BUSY_MASKED (0xFFFFFFFF).
+- Initialized A6XX_CP_PROTECT_CNTL (0).
+- Removed ArmSmmu4KPrivileged from Range 1 (0x100010000) allowing unprivileged SQE microcode fetch.
+- Attached both Stream 0 (user) and Stream 2 (secure) to Context Bank 0.
+- Added live on-screen CP diagnostics (INTR, SQE_PC, SQE_OP).
+- All 59 unit tests pass.
+- Commit fb2e367; CI 39629378755 passed.
+- Kernel SHA256: ac73d299f77c0b7b8e34157e65d724cf037e6f302a3ea7f656a00475a3d1a66b.
+- Image research/unixnu-cp-ready/boot-unixnu-smmu.img, SHA256 c8ac043583032c32397b7503748d619c08cbd2940cbed38ad343921ebd20049d.
+- Temporary boot accepted: Sending 0.495s / Booting 5.093s exit 0. No partition flash.
+- Awaiting screen photo confirming CP execution and SQE PC progression.
+
 ## Adreno 618 CP Init Packet Correction & Scratch Execution (2026-10-21)
 
 Resolved CP hang (STAT1=0x81000006, RPTR=0 observed in photo 4d463195):
