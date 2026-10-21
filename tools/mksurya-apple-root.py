@@ -17,6 +17,7 @@ p.add_argument('--touch-diagnostic', action='store_true', help='enable touch wit
 
 p.add_argument('--touch-firmware', type=Path, help='pinned Poco Tianma controller RAM firmware')
 p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware')
+p.add_argument('--sqe-firmware', type=Path, help='pinned Adreno 618 SQE firmware')
 
 p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
 
@@ -33,7 +34,8 @@ cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_
 if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
-if a.touch_firmware or a.gmu_firmware:
+ROOT = Path(__file__).resolve().parents[1]
+if a.touch_firmware or a.gmu_firmware or a.sqe_firmware or a.gpu_table_diagnostic:
     tree, end = adt.parse(a.adt.read_bytes())
     if end != a.adt.stat().st_size:
         raise SystemExit('unexpected trailing ADT bytes')
@@ -51,6 +53,12 @@ if a.touch_firmware or a.gmu_firmware:
         if len(gmu_fw) != 32768:
             raise SystemExit(f'invalid GMU firmware size: {len(gmu_fw)}')
         surya.setprop(chosen, 'surya-gmu-firmware', gmu_fw)
+    sqe_path = a.sqe_firmware or ((ROOT / 'research/firmware/a630_sqe.fw') if a.gpu_table_diagnostic else None)
+    if sqe_path and sqe_path.exists():
+        sqe_fw = sqe_path.read_bytes()
+        if len(sqe_fw) != 32136:
+            raise SystemExit(f'invalid SQE firmware size: {len(sqe_fw)}')
+        surya.setprop(chosen, 'surya-sqe-firmware', sqe_fw)
     adt_path = a.out.with_suffix('.adt')
     adt_path.parent.mkdir(parents=True, exist_ok=True)
     adt_path.write_bytes(adt.serialize(tree))

@@ -837,10 +837,10 @@ index 0000000..4450fdf
 +}
 diff --git a/bsd/dev/surya_unixnu_smmu.h b/bsd/dev/surya_unixnu_smmu.h
 new file mode 100644
-index 0000000..e0dc7b8
+index 0000000..e313442
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,36 @@
 +/* UniXNU ArmSmmu4K integration for SURYA. Live context and stream routing. */
 +#ifndef SURYA_UNIXNU_SMMU_H
 +#define SURYA_UNIXNU_SMMU_H
@@ -854,6 +854,8 @@ index 0000000..e0dc7b8
 +    int stage, code;
 +    uint32_t active_sctlr, active_fsr, smr0, s2cr0;
 +    unsigned context_enabled, streams_attached;
++    unsigned sqe_loaded, cp_started;
++    uint32_t cp_wptr, cp_rptr, cp_scratch0, cp_scratch1, cp_status1;
 +};
 +
 +/* Decode real ID1 before touching a context bank. This only authorizes reads
@@ -877,10 +879,10 @@ index 0000000..e0dc7b8
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..24fe67e
+index 0000000..603d1eb
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,486 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
 + * DT-ordered KGSL clocks use branch definitions from the matching driver.
 + */
@@ -890,6 +892,7 @@ index 0000000..24fe67e
 +#include <kern/clock.h>
 +#include <vm/pmap.h>
 +#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
 +#include <vm/vm_kern.h>
 +#include "surya_unixnu_smmu.h"
 +#include "surya_gpu_dt.h"
@@ -950,9 +953,151 @@ index 0000000..24fe67e
 +    return 0;
 +}
 +
++static inline uint32_t odd_bit(uint32_t field)
++{
++    uint32_t parity = 1;
++    while (field) {
++        parity ^= 1;
++        field &= field - 1;
++    }
++    return parity;
++}
++
++static inline uint32_t pm4_type4(uint32_t reg, uint32_t count)
++{
++    return 0x40000000u | count | (odd_bit(count) << 7) | (reg << 8) | (odd_bit(reg) << 27);
++}
++
++static inline uint32_t pm4_type7(uint32_t opcode, uint32_t count)
++{
++    return 0x70000000u | count | (odd_bit(count) << 15) | (opcode << 16) | (odd_bit(opcode) << 23);
++}
++
++static inline void cp_wr(vm_offset_t gpu, uint32_t reg, uint32_t val)
++{
++    *(volatile uint32_t *)(gpu + (reg * 4)) = val;
++    __asm__ volatile("dmb oshst" ::: "memory");
++}
++
++static inline uint32_t cp_rd(vm_offset_t gpu, uint32_t reg)
++{
++    uint32_t v = *(volatile uint32_t *)(gpu + (reg * 4));
++    __asm__ volatile("dmb oshld" ::: "memory");
++    return v;
++}
++
++static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring)
++{
++    vm_offset_t gpu = ml_io_map(SURYA_DT_GPU_PA, SURYA_DT_GPU_SIZE);
++    if (!gpu) return;
++
++    printf("SURYA UNIXNU STEP 16: initialize Adreno 618 CP ringbuffer\n");
++    delay(20000);
++
++    /* Enable 64-bit addressing mode across GPU pipeline */
++    cp_wr(gpu, 0x842, 1);  /* A6XX_CP_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xC01, 1);  /* A6XX_VSC_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xE00, 1);  /* A6XX_UCHE_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0x8601, 1); /* A6XX_GRAS_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0x8E05, 1); /* A6XX_RB_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0x9601, 1); /* A6XX_VPC_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0x9E01, 1); /* A6XX_PC_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xA601, 1); /* A6XX_VFD_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xAE01, 1); /* A6XX_SP_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xB601, 1); /* A6XX_TPL1_ADDR_MODE_CNTL */
++    cp_wr(gpu, 0xBE05, 1); /* A6XX_HLSQ_ADDR_MODE_CNTL */
++
++    const uint64_t sqe_iova = UINT64_C(0x100010000);
++    const uint64_t ring_iova = UINT64_C(0x100020000);
++    const uint64_t rptr_iova = UINT64_C(0x100030000);
++
++    /* Program SQE instruction base */
++    cp_wr(gpu, 0x830, (uint32_t)sqe_iova);
++    cp_wr(gpu, 0x831, (uint32_t)(sqe_iova >> 32));
++
++    /* Program RPTR shadow address */
++    cp_wr(gpu, 0x804, (uint32_t)rptr_iova);
++    cp_wr(gpu, 0x805, (uint32_t)(rptr_iova >> 32));
++
++    /* Program ringbuffer control: 16KB -> 0x20b */
++    cp_wr(gpu, 0x802, 0x20b);
++
++    /* Program ringbuffer base */
++    cp_wr(gpu, 0x800, (uint32_t)ring_iova);
++    cp_wr(gpu, 0x801, (uint32_t)(ring_iova >> 32));
++
++    /* Zero WPTR and RPTR */
++    cp_wr(gpu, 0x806, 0);
++    cp_wr(gpu, 0x807, 0);
++
++    /* Clear scratch registers */
++    cp_wr(gpu, 0x880, 0);
++    cp_wr(gpu, 0x881, 0);
++
++    /* Clear SQE_HALT to start CP engine */
++    cp_wr(gpu, 0x808, 1);
++    r->cp_started = 1;
++
++    printf("SURYA UNIXNU STEP 17: CP SQE unhalted; emit PM4 packets\n");
++    delay(20000);
++
++    /* Emit PM4 packets into ring buffer */
++    volatile uint32_t *rb = (volatile uint32_t *)ring;
++    unsigned idx = 0;
++
++    /* Packet 0: CP_THREAD_CONTROL (concurrent binning disable) */
++    rb[idx++] = pm4_type7(0x17, 1);
++    rb[idx++] = 1u << 27;
++
++    /* Packet 1: CP_ME_INIT */
++    rb[idx++] = pm4_type7(0x48, 7);
++    rb[idx++] = (1u<<0)|(1u<<1)|(1u<<3)|(1u<<6)|(1u<<8);
++    rb[idx++] = 0x00000003;
++    rb[idx++] = 0x20000000;
++    rb[idx++] = 0x00000002;
++    rb[idx++] = 0;
++    rb[idx++] = 0;
++    rb[idx++] = 0;
++
++    /* Packet 2: Type 4 writing 0x1337BEEF to CP_SCRATCH_REG0 */
++    rb[idx++] = pm4_type4(0x880, 1);
++    rb[idx++] = 0x1337BEEF;
++
++    /* Packet 3: Type 4 writing 0xFEEDCAFE to CP_SCRATCH_REG1 */
++    rb[idx++] = pm4_type4(0x881, 1);
++    rb[idx++] = 0xFEEDCAFE;
++
++    /* Clean cache for ring buffer */
++    for (uintptr_t p = (uintptr_t)ring; p < (uintptr_t)ring + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    __asm__ volatile("dsb sy; isb" ::: "memory");
++
++    /* Advance WPTR */
++    r->cp_wptr = idx;
++    cp_wr(gpu, 0x807, idx);
++
++    printf("SURYA UNIXNU STEP 18: WPTR written (%u words); polling execution\n", idx);
++    delay(20000);
++
++    /* Poll for execution */
++    for (unsigned poll = 0; poll < 3000; ++poll) {
++        r->cp_scratch0 = cp_rd(gpu, 0x880);
++        r->cp_scratch1 = cp_rd(gpu, 0x881);
++        r->cp_rptr = cp_rd(gpu, 0x806);
++        r->cp_status1 = cp_rd(gpu, 0x825);
++        if (r->cp_scratch0 == 0x1337BEEFu && r->cp_scratch1 == 0xFEEDCAFEu) break;
++        delay(100);
++    }
++
++    printf("SURYA UNIXNU CP RESULT: WPTR=%u RPTR=%u SCR0=%#x SCR1=%#x STAT1=%#x\n",
++        r->cp_wptr, r->cp_rptr, r->cp_scratch0, r->cp_scratch1, r->cp_status1);
++    delay(20000);
++}
++
 +static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
 +{
-+    vm_offset_t tables = 0, data = 0;
++    vm_offset_t tables = 0, data = 0, sqe = 0, ring = 0, rptr = 0;
 +    if (PAGE_SIZE != 16384) return 100;
 +    if (kmem_alloc_contig(kernel_map, &tables, 16384, PAGE_MASK, 0, 0,
 +        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
@@ -960,16 +1105,66 @@ index 0000000..24fe67e
 +    if (kmem_alloc_contig(kernel_map, &data, 16384, PAGE_MASK, 0, 0,
 +        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
 +        return 102;
++    if (kmem_alloc_contig(kernel_map, &sqe, 32768, PAGE_MASK, 0, 0,
++        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++        return 107;
++    if (kmem_alloc_contig(kernel_map, &ring, 16384, PAGE_MASK, 0, 0,
++        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++        return 108;
++    if (kmem_alloc_contig(kernel_map, &rptr, 16384, PAGE_MASK, 0, 0,
++        KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS)
++        return 109;
++
 +    ppnum_t tp = pmap_find_phys(kernel_pmap, (addr64_t)tables);
 +    ppnum_t dp = pmap_find_phys(kernel_pmap, (addr64_t)data);
-+    if (!tp || !dp) return 103;
++    ppnum_t sp = pmap_find_phys(kernel_pmap, (addr64_t)sqe);
++    ppnum_t rp = pmap_find_phys(kernel_pmap, (addr64_t)ring);
++    ppnum_t rptp = pmap_find_phys(kernel_pmap, (addr64_t)rptr);
++    if (!tp || !dp || !sp || !rp || !rptp) return 103;
++
 +    const uint64_t physical = ptoa_64(tp), data_physical = ptoa_64(dp);
++    const uint64_t sqe_physical = ptoa_64(sp), ring_physical = ptoa_64(rp), rptr_physical = ptoa_64(rptp);
++
++    /* Check for SQE microcode in device tree */
++    DTEntry chosen = NULL;
++    void const *sqe_fw = NULL;
++    unsigned int sqe_fw_size = 0;
++    if (SecureDTLookupEntry(NULL, "/chosen", &chosen) == kSuccess) {
++        if (SecureDTGetProperty(chosen, "surya-sqe-firmware", &sqe_fw, &sqe_fw_size) == kSuccess &&
++            sqe_fw && sqe_fw_size > 0 && sqe_fw_size <= 32768) {
++            bcopy(sqe_fw, (void *)sqe, sqe_fw_size);
++            r->sqe_loaded = 1;
++        }
++    }
++
++    /* Populate test data buffer with sentinel pattern */
++    *(volatile uint64_t *)data = 0xCAFEBABEDEADBEEFULL;
++
++    /* Clean cache to Point of Coherency (PoC) for data and firmware buffers */
++    for (uintptr_t p = (uintptr_t)data; p < (uintptr_t)data + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    for (uintptr_t p = (uintptr_t)sqe; p < (uintptr_t)sqe + 32768; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    for (uintptr_t p = (uintptr_t)ring; p < (uintptr_t)ring + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    for (uintptr_t p = (uintptr_t)rptr; p < (uintptr_t)rptr + 16384; p += 64) {
++        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
++    }
++    __asm__ volatile("dsb sy; isb" ::: "memory");
++
 +    const uint64_t iova = UINT64_C(0x100000000);
-+    ArmSmmu4KConfig config = {39, 36, physical, 4};
-+    ArmSmmu4KRange range = {iova, data_physical, 16384,
-+        ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2};
++    ArmSmmu4KConfig config = {39, 36, physical, 32};
++    ArmSmmu4KRange ranges[4] = {
++        {iova, data_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
++        {UINT64_C(0x100010000), sqe_physical, 32768, ArmSmmu4KRead | ArmSmmu4KExecute | ArmSmmu4KPrivileged, 0, 2},
++        {UINT64_C(0x100020000), ring_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
++        {UINT64_C(0x100030000), rptr_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
++    };
 +    ArmSmmu4KResult built = {0};
-+    ArmSmmu4KStatus status = ArmSmmu4KBuild(&config, &range, 1,
++    ArmSmmu4KStatus status = ArmSmmu4KBuild(&config, ranges, 4,
 +        (uint64_t *)tables, 4, &built);
 +    if (status) return status;
 +    r->table_pages = (unsigned)built.table_pages;
@@ -1060,6 +1255,10 @@ index 0000000..24fe67e
 +    printf("SURYA UNIXNU STEP 15: SMR0=%#x S2CR0=%#x (%s)\n",
 +        r->smr0, r->s2cr0, r->streams_attached ? "ATTACHED" : "UNATTACHED");
 +    delay(20000);
++
++    if (r->sqe_loaded && r->streams_attached) {
++        execute_cp_ring(r, ring);
++    }
 +
 +    return 0;
 +}
@@ -1166,6 +1365,7 @@ index 0000000..24fe67e
 +        r->stage = 5;
 +        if (r->context_enabled) r->stage = 6;
 +        if (r->streams_attached) r->stage = 7;
++        if (r->cp_scratch0 == 0x1337BEEFu) r->stage = 8;
 +    }
 +}
 +#endif

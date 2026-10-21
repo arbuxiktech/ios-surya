@@ -449,7 +449,19 @@ surya_gpu_pt_diagnostic(void)
             unixnu.context_enabled ? "ACTIVE" : "INACTIVE",
             unixnu.active_sctlr, unixnu.active_fsr, unixnu.smr0, unixnu.s2cr0,
             unixnu.streams_attached ? "ATTACHED" : "UNATTACHED");
-        printf("No GPU commands submitted; Metal acceleration not enabled\n");
+        if (unixnu.cp_started) {
+            printf("SURYA UNIXNU CP: SQE=%s WPTR=%u RPTR=%u SCR0=%#x SCR1=%#x STAT1=%#x\n",
+                unixnu.sqe_loaded ? "OK" : "NO",
+                unixnu.cp_wptr, unixnu.cp_rptr,
+                unixnu.cp_scratch0, unixnu.cp_scratch1, unixnu.cp_status1);
+            if (unixnu.cp_scratch0 == 0x1337BEEFu) {
+                printf("SURYA GPU ACCELERATION: VERIFIED (A618 CP EXECUTED PM4 PACKETS)\n");
+            } else {
+                printf("SURYA GPU CP: EXECUTION PENDING/TIMEOUT\n");
+            }
+        } else {
+            printf("No GPU commands submitted; Metal acceleration not enabled\n");
+        }
         printf("Launchd intentionally paused. Power + Volume Down: Fastboot\n");
         (void)tsleep(&wait_channel, PZERO, "gpudiag", hz * 5);
     }
