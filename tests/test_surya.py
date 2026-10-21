@@ -46,7 +46,7 @@ class SuryaTests(unittest.TestCase):
         compat = props(tree)['compatible'].split(b'\0')
         self.assertIn(b'xiaomi,surya', compat)
         self.assertNotIn(b'xiaomi,sweet', compat)
-        self.assertEqual(len(surya.child(tree, 'cpus').children), 1)
+        self.assertEqual(len(surya.child(tree, 'cpus').children), 8)
         self.assertNotIn(b'sweet-ufs\0', [props(n)['name'] for n in tree.children])
         self.assertEqual(mkpayload.adt_dram(adt.serialize(tree)), (0x100000000, 0x20000000))
 

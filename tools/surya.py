@@ -33,7 +33,7 @@ APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb
                        ' suryatouchreport=1')
 APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                         ' suryagpummu=1')
-APPLE_METAL_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
+APPLE_METAL_CMDLINE = (APPLE_GUI_CMDLINE.replace('cpus=1', 'cpus=8').replace('sweetfb_hz=30', 'sweetfb_hz=60') +
                        ' -no_slto_panic sheng-gpu-addon=1')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
@@ -72,8 +72,8 @@ def build(base, size, *, seed=None, qemu=False, product=None, storage=None, appl
     setprop(chosen, 'firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'system-firmware-version', mkadt.cstr('surya-shim'))
     setprop(chosen, 'unique-chip-id', mkadt.u64(0x5355525941000001))
-    # The exact MPIDR topology is not yet verified on this device. One boot CPU.
-    child(root, 'cpus').children = child(root, 'cpus').children[:1]
+    if qemu:
+        child(root, 'cpus').children = child(root, 'cpus').children[:1]
     root.children = [n for n in root.children
                      if dict((k, v) for k, f, v in n.props)['name'] != b'sweet-ufs\0']
     if storage is not None:
