@@ -233,6 +233,15 @@ IOReturn
 AGXDeviceUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
     IOMemoryDescriptor **memory)
 {
+    if (type == 0x5343) { /* 'SC' - NativeAdrenoScanoutType (1080x2400 panel fb) */
+        IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
+            0x9c000000ULL, (mach_vm_size_t)(1080 * 2400 * 4), kIODirectionInOut);
+        if (!desc) return kIOReturnNoMemory;
+        if (options) *options = kIOMapAnywhere | kIOMapInhibitCache;
+        *memory = desc;
+        return kIOReturnSuccess;
+    }
+
     if (!fLock) return kIOReturnNotReady;
     IOLockLock(fLock);
     surya_adreno_bo *bo = findBo((uint64_t)type);
@@ -507,6 +516,28 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
         rep->handle = bo->handle;
         IOLockUnlock(fLock);
         args->structureOutputSize = sizeof(NativeAdrenoAbiBoAllocReply);
+        return kIOReturnSuccess;
+    }
+
+    case 0x7001: /* 0x7000 + NGP_METHOD_MODE */ {
+        if (args->structureOutputSize < sizeof(NGPMode)) return kIOReturnBadArgument;
+        NGPMode *mode = (NGPMode *)args->structureOutput;
+        mode->version = NGP_VERSION;
+        mode->format = NGP_BGRX8888;
+        mode->width = 1080;
+        mode->height = 2400;
+        mode->stride = 1080 * 4;
+        mode->bytes = (uint64_t)(1080 * 2400 * 4);
+        args->structureOutputSize = sizeof(NGPMode);
+        return kIOReturnSuccess;
+    }
+
+    case 0x7002: /* 0x7000 + NGP_METHOD_WAIT_SWAP */ {
+        /* No swap queued for GPU copy; return timeout so presenter yields to CPU display path */
+        return (IOReturn)0xe00002d6u /* kIOReturnTimeout */;
+    }
+
+    case 0x7003: /* 0x7000 + NGP_METHOD_COMPLETE_SWAP */ {
         return kIOReturnSuccess;
     }
 

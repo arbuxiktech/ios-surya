@@ -95,10 +95,10 @@ index 0000000..81db7c5
 +#endif /* _SURYA_NATIVE_ADRENO_H */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdreno.cpp b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 new file mode 100644
-index 0000000..d4f4862
+index 0000000..06bb4e2
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
-@@ -0,0 +1,518 @@
+@@ -0,0 +1,549 @@
 +/* SPDX-License-Identifier: MIT */
 +/*
 + * NativeAdreno IOKit Driver for Xiaomi Poco X3 NFC (surya, SM7150 / Adreno 618).
@@ -334,6 +334,15 @@ index 0000000..d4f4862
 +AGXDeviceUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
 +    IOMemoryDescriptor **memory)
 +{
++    if (type == 0x5343) { /* 'SC' - NativeAdrenoScanoutType (1080x2400 panel fb) */
++        IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
++            0x9c000000ULL, (mach_vm_size_t)(1080 * 2400 * 4), kIODirectionInOut);
++        if (!desc) return kIOReturnNoMemory;
++        if (options) *options = kIOMapAnywhere | kIOMapInhibitCache;
++        *memory = desc;
++        return kIOReturnSuccess;
++    }
++
 +    if (!fLock) return kIOReturnNotReady;
 +    IOLockLock(fLock);
 +    surya_adreno_bo *bo = findBo((uint64_t)type);
@@ -611,6 +620,28 @@ index 0000000..d4f4862
 +        return kIOReturnSuccess;
 +    }
 +
++    case 0x7001: /* 0x7000 + NGP_METHOD_MODE */ {
++        if (args->structureOutputSize < sizeof(NGPMode)) return kIOReturnBadArgument;
++        NGPMode *mode = (NGPMode *)args->structureOutput;
++        mode->version = NGP_VERSION;
++        mode->format = NGP_BGRX8888;
++        mode->width = 1080;
++        mode->height = 2400;
++        mode->stride = 1080 * 4;
++        mode->bytes = (uint64_t)(1080 * 2400 * 4);
++        args->structureOutputSize = sizeof(NGPMode);
++        return kIOReturnSuccess;
++    }
++
++    case 0x7002: /* 0x7000 + NGP_METHOD_WAIT_SWAP */ {
++        /* No swap queued for GPU copy; return timeout so presenter yields to CPU display path */
++        return (IOReturn)0xe00002d6u /* kIOReturnTimeout */;
++    }
++
++    case 0x7003: /* 0x7000 + NGP_METHOD_COMPLETE_SWAP */ {
++        return kIOReturnSuccess;
++    }
++
 +    default:
 +        return kIOReturnUnsupported;
 +    }
@@ -619,10 +650,10 @@ index 0000000..d4f4862
 +#endif /* ARM64_BOARD_CONFIG_SURYA || SWEET */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdrenoABI.h b/iokit/Kernel/arm/SuryaNativeAdrenoABI.h
 new file mode 100644
-index 0000000..94b714f
+index 0000000..ac8b9b3
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdrenoABI.h
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,224 @@
 +/* SPDX-License-Identifier: MIT */
 +#ifndef NATIVE_ADRENO_ABI_H
 +#define NATIVE_ADRENO_ABI_H
@@ -808,7 +839,45 @@ index 0000000..94b714f
 +static_assert(sizeof(NativeAdrenoAbiTimestamp) == 8, "ABI timestamp layout");
 +static_assert(sizeof(NativeAdrenoAbiStatus) == 16, "ABI status layout");
 +#endif
++
++/* GOP / Scanout wire definitions for GPU presentation bridge */
++#define NGP_VERSION 1
++#define NGP_BGRX8888 1
++
++#define NGP_METHOD_MODE 1
++#define NGP_METHOD_WAIT_SWAP 2
++#define NGP_METHOD_COMPLETE_SWAP 3
++
++typedef struct NGPMode {
++    uint32_t version;
++    uint32_t format;
++    uint32_t width;
++    uint32_t height;
++    uint32_t stride;
++    uint64_t bytes;
++} NGPMode;
++
++typedef struct NGPWait {
++    uint64_t timeout_ms;
++} NGPWait;
++
++typedef struct NGPSwap {
++    uint64_t sequence;
++    uint64_t address;
++    uint64_t bytes;
++    uint32_t stride;
++    uint32_t width;
++    uint32_t height;
++} NGPSwap;
++
++typedef struct NGPComplete {
++    uint64_t sequence;
++    uint32_t result;
++    uint32_t reserved;
++} NGPComplete;
++
 +#endif
++
 diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
 --- a/iokit/conf/files.arm64
 +++ b/iokit/conf/files.arm64
