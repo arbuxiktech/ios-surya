@@ -9,6 +9,28 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Command Processor (CP) Ringbuffer & PM4 Scratch Submission (2026-10-21)
+
+Advancing to Milestone 7 following verified photo 7abee663 confirmation.
+Mapped 4 disjoint buffers in SMMUv2 CB0:
+- 0x100000000: 16KB data buffer (R/W)
+- 0x100010000: 32KB SQE microcode buffer (a630_sqe.fw, Read|Execute|Privileged)
+- 0x100020000: 16KB Command Processor ringbuffer (R/W)
+- 0x100030000: 16KB RPTR shadow and scratch memory (R/W)
+Enabled 64-bit addressing across GPU pipeline (CP, VSC, UCHE, GRAS, RB, VPC, PC, VFD, SP, TPL1, HLSQ).
+Configured CP SQE instruction base, ringbuffer base, control (0x20b), and RPTR shadow address.
+Unhalted CP SQE (A6XX_CP_SQE_CNTL = 1).
+Emitted PM4 packets: CP_THREAD_CONTROL (0x17), CP_ME_INIT (0x48), Type 4 to CP_SCRATCH_REG0 (0x1337BEEF), and Type 4 to CP_SCRATCH_REG1 (0xFEEDCAFE).
+Flushed cache with dc cvac and advanced WPTR. Added live CPU readback polling.
+All 59 unit tests pass.
+Commit 8726fed; CI 39623554758 passed.
+Verified kernel SHA256 4f64e7c5810ed0b43302aad453bf4df96f6e0937d812a222911b1778ca035175.
+Image research/unixnu-cp-ready/boot-unixnu-smmu.img, 20246528 bytes,
+SHA256 c920acd8c1d2cc45451d473ff8417e7d595565fbb5d1ecf13e979dfe38f8a286.
+Verified CI checksum, ARM64, live CP / PM4 / stream markers, exact payload/firmware/board profile.
+Temporary boot accepted: Sending 0.494s / Booting 5.093s exit 0. No partition flash.
+Awaiting owner screen photo confirming STEP 16-18 CP ringbuffer execution, SCR0=0x1337BEEF, SCR1=0xFEEDCAFE, and SMMU status stage=8.
+
 ## SMMUv2 S2CR Fault Mask & Continue-After-Fault Configuration (2026-10-21)
 
 Masked S2CR fault mode in ArmSmmu4KStreams to check `(s2cr & (3u << 16)) != FAULT` instead of whole-word equality.
