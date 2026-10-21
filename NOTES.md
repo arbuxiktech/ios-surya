@@ -9,6 +9,21 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 CP Init Packet Correction & Scratch Execution (2026-10-21)
+
+Resolved CP hang (STAT1=0x81000006, RPTR=0 observed in photo 4d463195):
+- Removed CP_THREAD_CONTROL (0x17) which is an A7xx-only opcode and illegal on A6xx.
+- Emitted authentic A6xx CP_ME_INIT with 11-word payload conforming to Xiaomi stock kernel adreno_a6xx.c.
+- Added CP_SET_PROTECTED_MODE (0x5f, 1 word: 0) to disable protected mode.
+- Targeted authentic A6xx scratch registers 0x883 (CP_SCRATCH_REG0) and 0x884 (CP_SCRATCH_REG1) as well as 0x880/0x881.
+- Enabled A6XX_RBBM_SECVID_TSB_ADDR_MODE_CNTL (0xF810).
+- All 59 unit tests pass.
+- Commit f9e2af9; CI 39626519887 passed.
+- Kernel SHA256: 5f8803f03417211875d43ea28083a9cd557a7192aae5485ffa2b4abe6d5b52f8.
+- Image research/unixnu-cp-ready/boot-unixnu-smmu.img, SHA256 16026801298f123e71123b2d3a4c25b27456c622a9e3993b97a000eab5ad0f1e.
+- Temporary boot accepted: Sending 0.486s / Booting 5.094s exit 0. No partition flash.
+- Awaiting screen photo confirming CP execution and scratch register readback.
+
 ## Adreno 618 Command Processor (CP) Ringbuffer & PM4 Scratch Submission (2026-10-21)
 
 Advancing to Milestone 7 following verified photo 7abee663 confirmation.
