@@ -9,6 +9,21 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Hardware Stream Verification & CP Ring Execution (2026-10-21)
+
+Boot with hardware register verification enabling direct CP ring submission:
+- Verified physical hardware registers match Stream 0 translation state (`SMR0=0x80000000`, `S2CR0=0`, `CB0=ACTIVE SCTLR=0x1167`).
+- Updated `surya_unixnu_smmu.c` to accept verified hardware registers (`r->smr0 == 0x80000000 && r->s2cr0 == 0`) and proceed directly to CP ring execution (`execute_cp_ring`).
+- Added on-screen diagnostic reporting for `attach_phase` and `attach_writes`.
+- Full CP pipeline initialization active: UCHE caches, ROQ thresholds, memory pool, AHB control, perf counters, and unprivileged SQE mapping.
+- Ring buffer emits authentic `CP_ME_INIT`, `CP_SET_PROTECTED_MODE`, and Type 4 scratch packet writing `0x1337BEEF`.
+- All 59 unit tests pass.
+- Commit `481545f`; CI `39635314627` passed.
+- Kernel SHA256: `5e8711e21a4f1d9768e2ad668cbfd347b1b03eb86e9353ffdd18a2baae8a216c`.
+- Image `research/unixnu-cp-ready/boot-unixnu-smmu.img`, SHA256 `5260c8fe482e23ca8d917570bcd1e641ab80ac96c3e9c0ee48ce8daaadbcb12e`.
+- Temporary boot accepted: Sending 0.488s / Booting 5.093s exit 0. No partition flash.
+- Awaiting screen photo confirming `SURYA UNIXNU CP:` execution and `SURYA GPU ACCELERATION: VERIFIED`.
+
 ## Adreno 618 Stream 0 Restore & CP Execution Test (2026-10-21)
 
 Resolved SMMU attach status 47 (ArmSmmu4KStateMismatch) caused by attempting slot 1 attach on SM7150:
