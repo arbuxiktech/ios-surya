@@ -91,6 +91,8 @@ def main():
         print(f"Contains GPU addon mount & staging string: {has_gpu_addon}")
         has_120hz = b"DisplayMaxRefreshRate" in kbytes
         print(f"Contains 120Hz ProMotion display properties string: {has_120hz}")
+        has_gpu_accel = b"SURYA GPU ACCEL INIT COMPLETE" in kbytes
+        print(f"Contains Adreno 618 hardware GPU accel init string: {has_gpu_accel}")
     else:
         print("ERROR: kernel.development.surya missing after extraction!")
         sys.exit(1)
