@@ -1,0 +1,52 @@
+diff --git a/meson.options b/meson.options
+index 678bc67..fc7e9cb 100644
+--- a/meson.options
++++ b/meson.options
+@@ -899,3 +899,11 @@ option(
+   value : false,
+   description : 'Build panfrost Rust components.'
+ )
++
++option('offline-adreno-probe', type : 'string', value : '',
++       description : 'C source for an explicitly requested offline compiler fixture')
++
++option('offline-air-nir-dir', type : 'string', value : '',
++       description : 'Optional external AIR frontend source directory for offline tests')
++option('offline-air-nir-llvm-config', type : 'string', value : '',
++       description : 'Explicit LLVM config executable for the offline AIR frontend')
+diff --git a/src/freedreno/ir3/meson.build b/src/freedreno/ir3/meson.build
+index c6258e5..ab6a9c0 100644
+--- a/src/freedreno/ir3/meson.build
++++ b/src/freedreno/ir3/meson.build
+@@ -173,3 +173,31 @@ test('ir3_delay_test',
+   ),
+   suite: ['freedreno'],
+ )
++
++if get_option('offline-adreno-probe') != ''
++  executable(
++    'adreno_compiler_probe',
++    get_option('offline-adreno-probe'),
++    link_with : libfreedreno_ir3,
++    dependencies : [idep_libir3decode, idep_mesautil, idep_nir],
++    include_directories : [inc_freedreno, inc_include, inc_src],
++    build_by_default : false,
++  )
++endif
++
++if get_option('offline-air-nir-dir') != ''
++  air_llvm_config = find_program(get_option('offline-air-nir-llvm-config'), required : true)
++  air_cpp_args = run_command(air_llvm_config, '--cxxflags', check : true).stdout().strip().split()
++  air_link_args = run_command(air_llvm_config, '--ldflags', '--libs', 'core', 'bitreader', 'bitwriter', 'analysis', '--system-libs', check : true).stdout().strip().split()
++  air_dir = get_option('offline-air-nir-dir')
++  executable(
++    'air_nir',
++    [air_dir / 'Frontend.cpp', air_dir / 'MesaBackend.c', air_dir / 'Library.c'],
++    cpp_args : air_cpp_args,
++    link_args : air_link_args,
++    link_with : libfreedreno_ir3,
++    dependencies : [idep_libir3decode, idep_mesautil, idep_nir],
++    include_directories : [inc_freedreno, inc_include, inc_src],
++    build_by_default : false,
++  )
++endif

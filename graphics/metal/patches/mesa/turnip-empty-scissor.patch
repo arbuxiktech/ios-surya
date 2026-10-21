@@ -1,0 +1,22 @@
+diff --git a/src/freedreno/vulkan/tu_pipeline.cc b/src/freedreno/vulkan/tu_pipeline.cc
+index dba43f9..8b010ed 100644
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -2854,13 +2858,16 @@ template <chip CHIP>
+ static unsigned
+ tu6_scissor_size(struct tu_device *dev, const struct vk_viewport_state *vp)
+ {
+-   return 1 + vp->scissor_count * 2;
++   /* A pipeline without viewport state (rasterizer discard) has no scissors: a type-4 packet of zero registers is invalid. */
++   return vp->scissor_count ? 1 + vp->scissor_count * 2 : 0;
+ }
+ 
+ template <chip CHIP>
+ void
+ tu6_emit_scissor(struct tu_cs *cs, const struct vk_viewport_state *vp)
+ {
++   if (!vp->scissor_count)
++      return;
+    tu_cs_emit_pkt4(cs, GRAS_SC_SCREEN_SCISSOR_TL(CHIP, 0).reg, vp->scissor_count * 2);
+ 
+    for (uint32_t i = 0; i < vp->scissor_count; i++) {

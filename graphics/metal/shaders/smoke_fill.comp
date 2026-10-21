@@ -1,0 +1,9 @@
+#version 450
+// Shader-execution check: every invocation writes a value derived from its global index and two push constants.
+layout(local_size_x = 64) in;
+layout(std430, set = 0, binding = 0) buffer Out { uint v[]; } o;
+layout(push_constant) uniform P { uint mul; uint add; } p;
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    o.v[i] = i * p.mul + p.add;
+}

@@ -1,0 +1,456 @@
+diff --git a/meson.options b/meson.options
+index 680d08f..8b92a2b 100644
+--- a/meson.options
++++ b/meson.options
+@@ -914,3 +914,6 @@ option('offline-air-nir-dir', type : 'string', value : '',
+        description : 'Optional external AIR frontend source directory for offline tests')
+ option('offline-air-nir-llvm-config', type : 'string', value : '',
+        description : 'Explicit LLVM config executable for the offline AIR frontend')
++
++option('tu-builtin-source-id', type : 'string', value : '', description : 'Exact builtin compiler source and profile identity')
++option('tu-builtin-pack-header', type : 'string', value : '', description : 'Explicit generated builtin pack header; empty retains compiler path')
+diff --git a/src/freedreno/vulkan/meson.build b/src/freedreno/vulkan/meson.build
+index 762ecc8..b544a9f 100644
+--- a/src/freedreno/vulkan/meson.build
++++ b/src/freedreno/vulkan/meson.build
+@@ -139,7 +139,11 @@ endif
+ 
+ if freedreno_kmds.contains('darwin')
+   tu_flags += '-DTU_HAS_DARWIN'
+-  libtu_files += files('tu_knl_darwin.cc')
++  libtu_files += files('tu_knl_darwin.cc', 'tu_builtin_cache.cc')
++  tu_flags += '-DTU_BUILTIN_SOURCE_ID="' + get_option('tu-builtin-source-id') + '"'
++  if get_option('tu-builtin-pack-header') != ''
++    tu_flags += '-DTU_BUILTIN_PACK_HEADER="' + get_option('tu-builtin-pack-header') + '"'
++  endif
+   libtu_includes += include_directories(get_option('tu-darwin-abi-dir'), is_system : false)
+   tu_deps += dependency('appleframeworks', modules : ['IOKit', 'CoreGraphics', 'Foundation', 'QuartzCore'])
+   # The wsi layer's device entrypoint table references weak symbols that nothing defines; ld64 needs them allowed.
+diff --git a/src/freedreno/vulkan/tu_builtin_cache.cc b/src/freedreno/vulkan/tu_builtin_cache.cc
+new file mode 100644
+index 0000000..1251f35
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_builtin_cache.cc
+@@ -0,0 +1,259 @@
++/* SPDX-License-Identifier: MIT */
++/* Driver-owned, build-time embedded builtin variants. This is not a general
++ * untrusted shader import API. Pack generation must use this exact compiler
++ * source/profile and GPU, and the final driver must carry the normal owner
++ * signature. No disk I/O, cache thread, fake completion or shader execution. */
++#include "tu_builtin_cache.h"
++#include "tu_device.h"
++#include "tu_shader.h"
++#include "tu_cs.h"
++#include "ir3/ir3_compiler.h"
++#include "ir3/ir3_shader.h"
++#include "util/blob.h"
++#include "util/mesa-blake3.h"
++
++#ifdef TU_BUILTIN_PACK_HEADER
++#include TU_BUILTIN_PACK_HEADER
++#endif
++
++static constexpr unsigned variant_count = GLOBAL_SH_COUNT + 2;
++static constexpr size_t max_pack_size = 4 * 1024 * 1024;
++static constexpr size_t max_variant_size = 256 * 1024;
++
++static void
++identity(struct tu_device *dev, struct blob *out)
++{
++   blob_write_bytes(out, "TUBUILT1", 8);
++   blob_write_uint32(out, 1);
++   blob_write_uint32(out, variant_count);
++   blob_write_bytes(out, TU_BUILTIN_SOURCE_ID, strlen(TU_BUILTIN_SOURCE_ID));
++   blob_write_uint32(out, dev->physical_device->dev_id.gpu_id);
++   blob_write_uint64(out, dev->physical_device->dev_id.chip_id);
++   blob_write_uint64(out, ir3_shader_debug_hash_key());
++   blob_write_uint32(out, sizeof(struct ir3_shader_variant));
++   blob_write_uint32(out, VARIANT_CACHE_SIZE);
++   blob_write_uint32(out, sizeof(struct ir3_const_state));
++   blob_write_uint32(out, sizeof(struct ir3_shader_key));
++   const struct ir3_compiler_options *o = &dev->compiler->options;
++   uint32_t flags = o->push_ubo_with_preamble | (o->disable_cache << 1) |
++      (o->storage_16bit << 2) | (o->storage_8bit << 3) |
++      (o->lower_base_vertex << 4) | (o->shared_push_consts << 5) |
++      (o->dual_color_blend_by_location << 6);
++   blob_write_uint32(out, flags);
++   blob_write_uint32(out, o->bindless_fb_read_descriptor);
++   blob_write_uint32(out, o->bindless_fb_read_slot);
++   blob_write_uint64(out, o->uche_trap_base);
++}
++
++static bool
++available(const struct blob_reader *in, size_t bytes)
++{
++   return !in->overrun && bytes <= (size_t)(in->end - in->current);
++}
++
++/* Read only after bounding the record and every allocation. Unlike the
++ * general IR3 disk-cache reader, failure is checked before dereferencing an
++ * allocation, and no allocation size is taken from an unchecked short blob. */
++static struct ir3_shader_variant *
++read_variant(struct blob_reader *in, struct ir3_compiler *compiler, void *owner)
++{
++   if (!available(in, sizeof(struct ir3_shader_key) + 8))
++      return NULL;
++   struct ir3_shader_key key;
++   blob_copy_bytes(in, &key, sizeof(key));
++   const struct ir3_shader_key zero_key = {};
++   if (memcmp(&key, &zero_key, sizeof(key)))
++      return NULL;
++   const uint32_t stage = blob_read_uint32(in);
++   const uint32_t mergedregs = blob_read_uint32(in);
++   if ((stage != MESA_SHADER_VERTEX && stage != MESA_SHADER_FRAGMENT) || mergedregs > 1)
++      return NULL;
++   struct ir3_shader_variant *v = rzalloc(owner, struct ir3_shader_variant);
++   if (!v)
++      return NULL;
++   v->compiler = compiler;
++   v->key = key;
++   v->type = (mesa_shader_stage) stage;
++   v->mergedregs = mergedregs;
++   v->const_state = rzalloc(v, struct ir3_const_state);
++   if (!v->const_state)
++      return NULL;
++   unsigned count = stage == MESA_SHADER_VERTEX && ir3_has_binning_vs(&key) ? 2 : 1;
++   for (unsigned i = 0; i < count; ++i) {
++      struct ir3_shader_variant *part = v;
++      if (i) {
++         part = rzalloc(v, struct ir3_shader_variant);
++         if (!part)
++            return NULL;
++         v->binning = part;
++         part->compiler = compiler;
++         part->key = key;
++         part->type = MESA_SHADER_VERTEX;
++         part->mergedregs = mergedregs;
++         part->binning_pass = true;
++         part->nonbinning = v;
++         part->const_state = v->const_state;
++      }
++      if (!available(in, VARIANT_CACHE_SIZE))
++         return NULL;
++      blob_copy_bytes(in, VARIANT_CACHE_PTR(part), VARIANT_CACHE_SIZE);
++      const size_t size = part->info.size;
++      if (!size || size > max_variant_size || size % 4 ||
++          part->info.sizedwords * sizeof(uint32_t) > size ||
++          part->info.constant_data_offset > size || !available(in, size))
++         return NULL;
++      part->bin = (uint32_t *) ralloc_size(part, size);
++      if (!part->bin)
++         return NULL;
++      blob_copy_bytes(in, part->bin, size);
++      if (!i) {
++         if (!available(in, sizeof(*part->const_state)))
++            return NULL;
++         blob_copy_bytes(in, part->const_state, sizeof(*part->const_state));
++      }
++      if (!compiler->info->props.load_shader_consts_via_preamble) {
++         if (!available(in, 4))
++            return NULL;
++         unsigned n = blob_read_uint32(in);
++         if (n > max_variant_size / 4 || !available(in, (size_t)n * 4))
++            return NULL;
++         part->imm_state.size = part->imm_state.count = n;
++         if (n) {
++            part->imm_state.values = (uint32_t *) ralloc_size(part, (size_t)n * 4);
++            if (!part->imm_state.values)
++               return NULL;
++            blob_copy_bytes(in, part->imm_state.values, (size_t)n * 4);
++         }
++      }
++   }
++   return v;
++}
++
++static bool
++decode(struct tu_device *dev, const void *data, size_t size, void *owner,
++       struct ir3_shader_variant **variants)
++{
++   if (strlen(TU_BUILTIN_SOURCE_ID) != 64 || !data || size > max_pack_size || size < 32)
++      return false;
++   uint8_t digest[BLAKE3_OUT_LEN];
++   _mesa_blake3_compute(data, size - sizeof(digest), digest);
++   if (memcmp(digest, (const uint8_t *)data + size - sizeof(digest), sizeof(digest)))
++      return false;
++   struct blob header;
++   blob_init(&header);
++   identity(dev, &header);
++   const bool matches = !header.out_of_memory && header.size <= size - sizeof(digest) &&
++                        !memcmp(header.data, data, header.size);
++   const size_t prefix = header.size;
++   blob_finish(&header);
++   if (!matches)
++      return false;
++   struct blob_reader in;
++   blob_reader_init(&in, (const uint8_t *)data + prefix, size - prefix - sizeof(digest));
++   for (unsigned i = 0; i < variant_count; ++i) {
++      if (!available(&in, 8) || blob_read_uint32(&in) != i)
++         return false;
++      const size_t length = blob_read_uint32(&in);
++      if (!length || length > max_variant_size || !available(&in, length))
++         return false;
++      struct blob_reader entry;
++      blob_reader_init(&entry, in.current, length);
++      variants[i] = read_variant(&entry, dev->compiler, owner);
++      if (!variants[i] || entry.overrun || entry.current != entry.end ||
++          variants[i]->type != (i < 3 ? MESA_SHADER_VERTEX : MESA_SHADER_FRAGMENT))
++         return false;
++      in.current += length;
++   }
++   uint64_t words = 0;
++   for (unsigned i = 0; i < GLOBAL_SH_COUNT; ++i)
++      words += align(variants[i]->info.sizedwords, 32);
++   return words <= ARRAY_SIZE(((struct tu6_global *)0)->shaders) &&
++          !in.overrun && in.current == in.end;
++}
++
++VkResult
++tu_builtin_pack_load(struct tu_device *dev)
++{
++#ifdef TU_BUILTIN_PACK_HEADER
++   void *owner = ralloc_context(NULL);
++   if (!owner)
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   if (!decode(dev, tu_builtin_pack_bytes, sizeof(tu_builtin_pack_bytes), owner, dev->builtin_variants)) {
++      ralloc_free(owner);
++      memset(dev->builtin_variants, 0, sizeof(dev->builtin_variants));
++      /* A requested pack is mandatory: no silent runtime compiler fallback. */
++      return VK_ERROR_INITIALIZATION_FAILED;
++   }
++   dev->builtin_cache_owner = owner;
++#endif
++   return VK_SUCCESS;
++}
++
++/* Explicit offline tool interfaces. They never load a pack into a running
++ * device, replace a shader, submit commands, or change Vulkan feature reports. */
++extern "C" __attribute__((visibility("default"))) VkResult
++tu_export_builtin_shader_pack(VkDevice handle, size_t *size, void *data)
++{
++   VK_FROM_HANDLE(tu_device, dev, handle);
++   if (!dev || !size || strlen(TU_BUILTIN_SOURCE_ID) != 64)
++      return VK_ERROR_INITIALIZATION_FAILED;
++   struct blob out;
++   blob_init(&out);
++   identity(dev, &out);
++   for (unsigned i = 0; i < variant_count; ++i) {
++      const struct ir3_shader_variant *v = i < GLOBAL_SH_COUNT ? dev->global_shader_variants[i] :
++         (i == GLOBAL_SH_COUNT ? dev->empty_fs->variant : dev->empty_fs_fdm->variant);
++      if (!v) {
++         blob_finish(&out);
++         return VK_ERROR_INITIALIZATION_FAILED;
++      }
++      struct blob entry;
++      blob_init(&entry);
++      ir3_store_variant(&entry, v);
++      blob_write_uint32(&out, i);
++      blob_write_uint32(&out, entry.size);
++      blob_write_bytes(&out, entry.data, entry.size);
++      bool failed = entry.out_of_memory;
++      blob_finish(&entry);
++      if (failed) {
++         blob_finish(&out);
++         return VK_ERROR_OUT_OF_HOST_MEMORY;
++      }
++   }
++   if (out.out_of_memory || out.size > max_pack_size - BLAKE3_OUT_LEN) {
++      blob_finish(&out);
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   }
++   uint8_t digest[BLAKE3_OUT_LEN];
++   _mesa_blake3_compute(out.data, out.size, digest);
++   blob_write_bytes(&out, digest, sizeof(digest));
++   if (out.out_of_memory || out.size > max_pack_size) {
++      blob_finish(&out);
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   }
++   VkResult result = VK_SUCCESS;
++   if (data) {
++      if (*size < out.size)
++         result = VK_INCOMPLETE;
++      else
++         memcpy(data, out.data, out.size);
++   }
++   *size = out.size;
++   blob_finish(&out);
++   return result;
++}
++
++extern "C" __attribute__((visibility("default"))) VkResult
++tu_validate_builtin_shader_pack(VkDevice handle, size_t size, const void *data)
++{
++   VK_FROM_HANDLE(tu_device, dev, handle);
++   if (!dev)
++      return VK_ERROR_INITIALIZATION_FAILED;
++   void *owner = ralloc_context(NULL);
++   if (!owner)
++      return VK_ERROR_OUT_OF_HOST_MEMORY;
++   struct ir3_shader_variant *variants[variant_count] = {};
++   bool valid = decode(dev, data, size, owner, variants);
++   ralloc_free(owner);
++   return valid ? VK_SUCCESS : VK_ERROR_INITIALIZATION_FAILED;
++}
+diff --git a/src/freedreno/vulkan/tu_builtin_cache.h b/src/freedreno/vulkan/tu_builtin_cache.h
+new file mode 100644
+index 0000000..74e97e6
+--- /dev/null
++++ b/src/freedreno/vulkan/tu_builtin_cache.h
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: MIT */
++#ifndef TU_BUILTIN_CACHE_H
++#define TU_BUILTIN_CACHE_H
++#include "tu_common.h"
++VkResult tu_builtin_pack_load(struct tu_device *dev);
++extern "C" VkResult tu_export_builtin_shader_pack(VkDevice device, size_t *size, void *data);
++extern "C" VkResult tu_validate_builtin_shader_pack(VkDevice device, size_t size, const void *data);
++#endif
+diff --git a/src/freedreno/vulkan/tu_clear_blit.cc b/src/freedreno/vulkan/tu_clear_blit.cc
+index 47a2fc6..1d33085 100644
+--- a/src/freedreno/vulkan/tu_clear_blit.cc
++++ b/src/freedreno/vulkan/tu_clear_blit.cc
+@@ -981,33 +981,39 @@ static void
+ compile_shader(struct tu_device *dev, struct nir_shader *nir,
+                unsigned consts, unsigned *offset, enum global_shader idx)
+ {
+-   nir->options = ir3_get_compiler_options(dev->compiler);
++   /* A provisioned variant bypasses NIR/compiler work while retaining the
++    * original global-BO upload, addresses and command emission below. */
++   struct ir3_shader_variant *so = dev->builtin_variants[idx];
++   struct ir3_shader *sh = NULL;
++   if (so) {
++      ralloc_free(nir);
++   } else {
++      nir->options = ir3_get_compiler_options(dev->compiler);
+ 
+-   nir_assign_io_var_locations(nir, nir_var_shader_in);
+-   nir_assign_io_var_locations(nir, nir_var_shader_out);
++      nir_assign_io_var_locations(nir, nir_var_shader_in);
++      nir_assign_io_var_locations(nir, nir_var_shader_out);
+ 
+-   struct ir3_const_allocations const_allocs = {};
+-   if (consts > 0)
+-      ir3_const_alloc(&const_allocs, IR3_CONST_ALLOC_UBO_RANGES, align(consts, 8), 1);
++      struct ir3_const_allocations const_allocs = {};
++      if (consts > 0)
++         ir3_const_alloc(&const_allocs, IR3_CONST_ALLOC_UBO_RANGES, align(consts, 8), 1);
+ 
+-   const struct ir3_shader_options options = {
+-      .api_wavesize = IR3_SINGLE_OR_DOUBLE,
+-      .real_wavesize = IR3_SINGLE_OR_DOUBLE,
+-      .const_allocs = const_allocs,
+-      .fragdata_dynamic_remap =
+-         idx >= GLOBAL_SH_VS_CLEAR && idx <= GLOBAL_SH_FS_CLEAR_MAX,
+-   };
++      const struct ir3_shader_options options = {
++         .api_wavesize = IR3_SINGLE_OR_DOUBLE,
++         .real_wavesize = IR3_SINGLE_OR_DOUBLE,
++         .const_allocs = const_allocs,
++         .fragdata_dynamic_remap =
++            idx >= GLOBAL_SH_VS_CLEAR && idx <= GLOBAL_SH_FS_CLEAR_MAX,
++      };
+ 
+-   ir3_finalize_nir(dev->compiler, &options.nir_options, nir);
++      ir3_finalize_nir(dev->compiler, &options.nir_options, nir);
+ 
+-   ir3_nir_lower_io(nir);
++      ir3_nir_lower_io(nir);
+ 
+-   struct ir3_shader *sh =
+-      ir3_shader_from_nir(dev->compiler, nir, &options);
++      sh = ir3_shader_from_nir(dev->compiler, nir, &options);
+ 
+-   struct ir3_shader_key key = {};
+-   struct ir3_shader_variant *so =
+-      ir3_shader_get_variant(sh, &key, false, false, NULL, NULL);
++      struct ir3_shader_key key = {};
++      so = ir3_shader_get_variant(sh, &key, false, false, NULL, NULL);
++   }
+ 
+    struct tu6_global *global = dev->global_bo_map;
+ 
+@@ -1045,6 +1051,8 @@ tu_destroy_clear_blit_shaders(struct tu_device *dev)
+       if (dev->global_shaders[i])
+          ir3_shader_destroy(dev->global_shaders[i]);
+    }
++   ralloc_free(dev->builtin_cache_owner);
++   dev->builtin_cache_owner = NULL;
+ }
+ 
+ enum r3d_type {
+diff --git a/src/freedreno/vulkan/tu_device.cc b/src/freedreno/vulkan/tu_device.cc
+index 3b512f8..527a4d4 100644
+--- a/src/freedreno/vulkan/tu_device.cc
++++ b/src/freedreno/vulkan/tu_device.cc
+@@ -34,6 +34,7 @@
+ #include "fdl/freedreno_layout.h"
+ #include "tu_acceleration_structure.h"
+ #include "tu_clear_blit.h"
++#include "tu_builtin_cache.h"
+ #include "tu_cmd_buffer.h"
+ #include "tu_cs.h"
+ #include "tu_descriptor_set.h"
+@@ -3049,6 +3050,11 @@ tu_CreateDevice(VkPhysicalDevice physicalDevice,
+ 
+    global = (struct tu6_global *)device->global_bo->map;
+    device->global_bo_map = global;
++#ifdef TU_HAS_DARWIN
++   result = tu_builtin_pack_load(device);
++   if (result != VK_SUCCESS)
++      goto fail_null_accel_struct;
++#endif
+    tu_init_clear_blit_shaders(device);
+ 
+    if (device->vk.enabled_features.accelerationStructure &&
+diff --git a/src/freedreno/vulkan/tu_device.h b/src/freedreno/vulkan/tu_device.h
+index ce1d494..356ab86 100644
+--- a/src/freedreno/vulkan/tu_device.h
++++ b/src/freedreno/vulkan/tu_device.h
+@@ -136,6 +136,8 @@ struct tu_physical_device
+    uint64_t va_size;
+ 
+    bool has_cached_coherent_memory;
++   /* The kernel pins host pages as BOs (VK_EXT_external_memory_host). */
++   bool has_host_import;
+    bool has_cached_non_coherent_memory;
+    /* Index for device local, host-coherent, host-cached memory.
+     * Only set to positive index when overwriting device-local, uncached memory
+@@ -310,6 +312,8 @@ struct tu_device
+    int fd;
+ 
+    struct ir3_compiler *compiler;
++   void *builtin_cache_owner;
++   struct ir3_shader_variant *builtin_variants[GLOBAL_SH_COUNT + 2];
+ 
+    /* Backup in-memory cache to be used if the app doesn't provide one */
+    struct vk_pipeline_cache *mem_cache;
+diff --git a/src/freedreno/vulkan/tu_shader.cc b/src/freedreno/vulkan/tu_shader.cc
+index 8c228e9..d99d55c 100644
+--- a/src/freedreno/vulkan/tu_shader.cc
++++ b/src/freedreno/vulkan/tu_shader.cc
+@@ -3858,10 +3858,21 @@ tu_empty_fs_create(struct tu_device *dev, struct tu_shader **shader,
+    for (unsigned i = 0; i < MAX_SETS; i++)
+       (*shader)->dynamic_descriptor_sizes[i] = -1;
+ 
+-   struct ir3_shader *ir3_shader =
+-      ir3_shader_from_nir(dev->compiler, fs_b.shader, &options);
+-   (*shader)->variant = ir3_shader_create_variant(ir3_shader, &key, false);
+-   ir3_shader_destroy(ir3_shader);
++   struct ir3_shader_variant *cached =
++      dev->builtin_variants[GLOBAL_SH_COUNT + fragment_density_map];
++   if (cached) {
++      /* The shader object owns its variant independently of the global
++       * builtin context: normal shader destruction remains unchanged. */
++      ralloc_steal(NULL, cached);
++      (*shader)->variant = cached;
++      dev->builtin_variants[GLOBAL_SH_COUNT + fragment_density_map] = NULL;
++      ralloc_free(fs_b.shader);
++   } else {
++      struct ir3_shader *ir3_shader =
++         ir3_shader_from_nir(dev->compiler, fs_b.shader, &options);
++      (*shader)->variant = ir3_shader_create_variant(ir3_shader, &key, false);
++      ir3_shader_destroy(ir3_shader);
++   }
+ 
+    return tu_upload_shader(dev, *shader);
+ }

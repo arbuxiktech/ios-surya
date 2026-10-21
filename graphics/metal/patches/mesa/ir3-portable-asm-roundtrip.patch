@@ -1,0 +1,36 @@
+diff --git a/src/freedreno/ir3/ir3_shader.c b/src/freedreno/ir3/ir3_shader.c
+index 6b8419b..cfe684a 100644
+--- a/src/freedreno/ir3/ir3_shader.c
++++ b/src/freedreno/ir3/ir3_shader.c
+@@ -352,17 +352,27 @@ create_roundtrip_variant(struct ir3_shader *shader, struct ir3_shader_variant *v
+    char *disasm_data = NULL;
+    size_t disasm_size = 0;
+    FILE *disasm_stream = open_memstream(&disasm_data, &disasm_size);
++   if (!disasm_stream)
++      goto fail;
+    ir3_shader_disasm(v, v->bin, disasm_stream);
+-   fflush(disasm_stream);
++   if (fclose(disasm_stream)) {
++      free(disasm_data);
++      goto fail;
++   }
+ 
+    struct ir3_kernel_info info;
+    memset(&info, 0, sizeof(info));
+    info.numwg = INVALID_REG;
+ 
+-   fseek(disasm_stream, 0, SEEK_SET);
+-   rt_v->ir = ir3_parse(rt_v, &info, disasm_stream);
++   /* open_memstream is a write stream; read the completed bytes separately. */
++   FILE *input = fmemopen(disasm_data, disasm_size, "r");
++   if (!input) {
++      free(disasm_data);
++      goto fail;
++   }
++   rt_v->ir = ir3_parse(rt_v, &info, input);
+ 
+-   fclose(disasm_stream);
++   fclose(input);
+    free(disasm_data);
+ 
+    if (!rt_v->ir) {

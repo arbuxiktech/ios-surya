@@ -1,0 +1,12 @@
+diff --git a/meson.build b/meson.build
+index 3aed8ca..6a2a30c 100644
+--- a/meson.build
++++ b/meson.build
+@@ -985,6 +985,7 @@ if with_clc
+ endif
+ 
+ with_gfx_compute = [
++  with_tools.contains('freedreno'),
+   with_any_opengl,
+   with_any_vk,
+   with_clc,

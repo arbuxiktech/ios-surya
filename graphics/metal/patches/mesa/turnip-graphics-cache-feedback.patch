@@ -1,0 +1,25 @@
+diff --git a/src/freedreno/vulkan/tu_pipeline.cc b/src/freedreno/vulkan/tu_pipeline.cc
+--- a/src/freedreno/vulkan/tu_pipeline.cc
++++ b/src/freedreno/vulkan/tu_pipeline.cc
+@@ -1958,7 +1958,10 @@
+ 
+    if (!executable_info) {
+       cache_hit = true;
+-      bool application_cache_hit = false;
++      /* Every required shader (and retained NIR, when requested) must come
++       * from the application's cache. Starting false makes this AND reduction
++       * report a miss even when compile-forbidden creation succeeds. */
++      bool application_cache_hit = true;
+ 
+       unsigned char shader_blake3[BLAKE3_KEY_LEN + 1];
+       memcpy(shader_blake3, pipeline_blake3, sizeof(pipeline_blake3));
+@@ -1997,7 +2000,8 @@
+          cache_hit &= !!nir_shaders;
+       }
+ 
+-      if (application_cache_hit && builder->cache != builder->device->mem_cache) {
++      if (cache_hit && application_cache_hit &&
++          builder->cache != builder->device->mem_cache) {
+          pipeline_feedback.flags |=
+             VK_PIPELINE_CREATION_FEEDBACK_APPLICATION_PIPELINE_CACHE_HIT_BIT;
+       }
