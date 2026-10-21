@@ -1,6 +1,6 @@
 diff --git a/iokit/Kernel/arm/SuryaNativeAdreno.h b/iokit/Kernel/arm/SuryaNativeAdreno.h
 new file mode 100644
-index 0000000..ea4f8e4
+index 0000000..81db7c5
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdreno.h
 @@ -0,0 +1,89 @@
@@ -23,7 +23,7 @@ index 0000000..ea4f8e4
 +#include <IOKit/IOLocks.h>
 +#include "SuryaNativeAdrenoABI.h"
 +
-+#define SURYA_ADRENO_MAX_BOS 1024
++#define SURYA_ADRENO_MAX_BOS 256
 +#define SURYA_ADRENO_MAX_QUEUES 8
 +
 +class AGXAccelerator;

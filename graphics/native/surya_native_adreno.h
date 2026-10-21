@@ -17,7 +17,7 @@
 #include <IOKit/IOLocks.h>
 #include "SuryaNativeAdrenoABI.h"
 
-#define SURYA_ADRENO_MAX_BOS 1024
+#define SURYA_ADRENO_MAX_BOS 256
 #define SURYA_ADRENO_MAX_QUEUES 8
 
 class AGXAccelerator;
