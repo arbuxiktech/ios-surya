@@ -10,7 +10,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-RUN_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 39337488012
+RUN_ID = int(sys.argv[1]) if len(sys.argv) > 1 else 39661163984
 REPO = "arbuxiktech/ios-surya"
 
 def get_token():
@@ -87,6 +87,8 @@ def main():
         print(f"Contains GPU page table diagnostic string: {has_gpu_pt}")
         has_native_adreno = b"SURYA: AGXAccelerator registered" in kbytes
         print(f"Contains NativeAdreno AGXAccelerator driver string: {has_native_adreno}")
+        has_gpu_addon = b"SURYA GPU ADDON: sheng-gpu-addon=1 detected" in kbytes
+        print(f"Contains GPU addon mount & staging string: {has_gpu_addon}")
     else:
         print("ERROR: kernel.development.surya missing after extraction!")
         sys.exit(1)

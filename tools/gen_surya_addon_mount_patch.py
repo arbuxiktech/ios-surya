@@ -298,14 +298,15 @@ def generate():
     patch += '''diff --git a/bsd/conf/files b/bsd/conf/files
 --- a/bsd/conf/files
 +++ b/bsd/conf/files
-@@ -382,6 +382,7 @@
+@@ -388,6 +388,7 @@
+ bsd/kern/kern_credential.c		standard
  bsd/kern/kern_crossarch.c		standard
  bsd/kern/kern_cs.c			standard
  bsd/kern/sweet_amfi.c			standard
 +bsd/kern/surya_gpu_addon.c		standard
- bsd/kern/kern_csr.c			optional config_csr
- bsd/kern/kern_debug.c			standard
- bsd/kern/kern_symfile.c			standard
+ 
+ # Apple OSS hfs-627.100.6, staged by xnu/patches/0026-stage-hfs.sh
+ bsd/sweet_hfs/core/BTree.c		optional sweet_hfs
 '''
 
     # 2. bsd/miscfs/bindfs/bindfs.h
@@ -381,7 +382,8 @@ def generate():
     patch += '''diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -470,10 +470,12 @@
+@@ -467,11 +467,11 @@
+ 	if (PE_i_can_has_debugger(NULL)) {
  		if (PE_parse_boot_argn("-show_pointers", &namep, sizeof(namep))) {
  			doprnt_hide_pointers = FALSE;
  		}
@@ -389,15 +391,14 @@ def generate():
 -			extern boolean_t spinlock_timeout_panic;
 -			spinlock_timeout_panic = FALSE;
 -		}
-+	}
-+	/* Owner device: honour -no_slto_panic without a debugger-enabled device policy. */
+ 	}
 +	if (PE_parse_boot_argn("-no_slto_panic", &namep, sizeof(namep))) {
 +		extern boolean_t spinlock_timeout_panic;
 +		spinlock_timeout_panic = FALSE;
 +	}
  
  	kernel_bootstrap_log("console_init");
- '''
+'''
 
     # 6. bsd/kern/kern_exec.c
     patch += '''diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
