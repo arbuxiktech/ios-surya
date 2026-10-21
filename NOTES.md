@@ -9,6 +9,20 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Isolated SQE Microcode Header Offset Boot (2026-10-21)
+
+Resolved CP INTR=0x84 (illegal instruction error at PC=0, OP=0) from photo 0cf84073 with isolated surgical fix:
+- Root cause: Adreno SQE firmware (`a630_sqe.fw`) binary contains a 4-byte header/version word (`0x00000000`). Loading from offset 0 presented opcode `0x00000000` to the SQE at PC=0, triggering `A6XX_CP_ILLEGAL_INSTR_ERROR` (0x80) and `A6XX_CP_HW_FAULT` (0x04).
+- Fixed SQE microcode loading in `surya_unixnu_smmu.c` to skip the 4-byte header (`(const char *)sqe_fw + 4`, `sqe_fw_size - 4`), placing the authentic SQE entry instruction (`0x016ee19a`) at `PC=0`.
+- Kept the known-safe hardware state from commit `481545f` (which successfully attached SMMU Stream 0 and printed all diagnostics).
+- Added `A6XX_CP_HW_FAULT` (`0x821`) to diagnostic reporting.
+- All 59 unit tests pass.
+- Commit `098aa09`; CI `39643542058` passed.
+- Kernel SHA256: `66bb5ff927018fd9461a0884a95d91f45ca3e3b66bb19ce1fbfd5ed8c876da0b`.
+- Image `research/unixnu-cp-ready/boot-unixnu-smmu.img`, SHA256 `cb1d8d2e716d778ab06d669418323826a419acc0ff33af0656e52943a80aa7eb`.
+- Temporary boot accepted: Sending 0.412s / Booting 5.093s exit 0. No partition flash.
+- Awaiting screen photo confirming SQE entry execution, WPTR/RPTR advance, and SCR0=0x1337BEEF (`SURYA GPU ACCELERATION: VERIFIED`).
+
 ## Adreno 618 SQE Microcode Header Offset & Secure Mode Resolution (2026-10-21)
 
 Resolved CP INTR=0x84 (illegal instruction error at PC=0, OP=0) from photo 0cf84073:
