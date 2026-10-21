@@ -9,6 +9,21 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 SQE Microcode Header Offset & Secure Mode Resolution (2026-10-21)
+
+Resolved CP INTR=0x84 (illegal instruction error at PC=0, OP=0) from photo 0cf84073:
+- Root cause: Adreno SQE firmware (`a630_sqe.fw`) binary contains a 4-byte header/version word (`0x00000000`). Loading from offset 0 presented opcode `0x00000000` to the SQE at PC=0, triggering `A6XX_CP_ILLEGAL_INSTR_ERROR` (0x80) and `A6XX_CP_HW_FAULT` (0x04).
+- Fixed SQE microcode loading in `surya_unixnu_smmu.c` to skip the 4-byte header (`(const char *)sqe_fw + 4`, `sqe_fw_size - 4`), matching Qualcomm KGSL `_load_firmware`, Linux Freedreno `adreno_fw_create_bo`, and UniXNU `NativeAdrenoGpuContext.h` ("a740_sqe.fw without its first dword").
+- Dropped GPU out of secure mode by writing `A6XX_RBBM_SECVID_TRUST_CNTL` (`0xF400`) = 0 in `execute_cp_ring`, allowing CP transactions to access non-secure DDR (Stream ID 0).
+- Powered on GMU SPTPRAC domain (`0x1A881` = `0x00778000`).
+- Configured UCHE GBIF and mode control: `A6XX_UCHE_GBIF_GX_CONFIG` (`0xE3A` = `0x10200F9`), `A6XX_UCHE_MODE_CNTL` (`0xE01` = `1 << 23`, mal=64), and `A6XX_PC_DBG_ECO_CNTL` (`0x9E07` = `0x300 << 11`).
+- Enforced Cache Clean & Invalidate to PoC (`dc civac`) across data, SQE, ring, rptr, and translation tables.
+- Programmed Qualcomm QSMMUv2 CB0 `ACTLR` (`0x70000000`) and 12 DTB `attach-impl-defs` registers (`0x6000`..`0x6b68`) into SMMU GR0.
+- Added full SMMU CB0 `TLBIALL` + `TLBSYNC` invalidation after stream attachment.
+- Added `A6XX_CP_HW_FAULT` (`0x821`) to diagnostic reporting.
+- All 59 unit tests pass.
+- Commit `7db2378`; CI `39641847973` running.
+
 ## Adreno 618 Hardware Stream Verification & CP Ring Execution (2026-10-21)
 
 Boot with hardware register verification enabling direct CP ring submission:
