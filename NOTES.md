@@ -21,7 +21,12 @@ Image research/unixnu-stream-attach-ready/boot-unixnu-smmu.img, 20246528 bytes,
 SHA256 9dc626b4152fd84d86b57356e138eeb4538714ef5783c236ddf2f46e17108c53.
 Verified CI checksum, ARM64, live CB0 / stream markers, exact payload/firmware/board profile.
 Temporary boot accepted: Sending 0.487s / Booting 5.093s exit 0. No partition flash.
-Awaiting owner screen photo confirming STEP 12-15 stream 0 attachment (ATTACHED) and SMMU status stage=7 code=0.
+Owner photo 7abee663 confirms complete live SMMUv2 stream attachment:
+- SURYA UNIXNU SMMU: stage=7 code=0 DT clocks=0xf
+- SURYA UNIXNU CB0: off=0x8000 SCTLR=0 FSR=0 TCR=0 TTBR0=0
+- SURYA UNIXNU TABLES: pages=3 leaves=4 (live 4KB tables)
+- SURYA UNIXNU LIVE: CB0=ACTIVE SCTLR=0x1167 SMR0=0x80000000 S2CR0=0 (ATTACHED)
+- Hardware stream attachment to Context Bank 0 is ACTIVE and fully verified.
 
 ## SMMUv2 Live Context Bank 0 Activation & Stream Attachment (2026-10-20)
 
