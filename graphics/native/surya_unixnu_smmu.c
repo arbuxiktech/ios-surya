@@ -123,6 +123,30 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
     cp_wr(gpu, 0xBE05, 1); /* A6XX_HLSQ_ADDR_MODE_CNTL */
     cp_wr(gpu, 0xF810, 1); /* A6XX_RBBM_SECVID_TSB_ADDR_MODE_CNTL */
 
+    /* Setup UCHE (Unified Cache Hierarchy Engine) */
+    cp_wr(gpu, 0xE05, 0xffffffc0); /* A6XX_UCHE_WRITE_RANGE_MAX_LO */
+    cp_wr(gpu, 0xE06, 0x0001ffff); /* A6XX_UCHE_WRITE_RANGE_MAX_HI */
+    cp_wr(gpu, 0xE07, 0xfffff000); /* A6XX_UCHE_WRITE_THRU_BASE_LO */
+    cp_wr(gpu, 0xE08, 0x0001ffff); /* A6XX_UCHE_WRITE_THRU_BASE_HI */
+    cp_wr(gpu, 0xE09, 0xfffff000); /* A6XX_UCHE_TRAP_BASE_LO */
+    cp_wr(gpu, 0xE0A, 0x0001ffff); /* A6XX_UCHE_TRAP_BASE_HI */
+    cp_wr(gpu, 0xE17, 4);          /* A6XX_UCHE_CACHE_WAYS */
+    cp_wr(gpu, 0xE18, 0x804);      /* A6XX_UCHE_FILTER_CNTL */
+    cp_wr(gpu, 0xE19, 1);          /* A6XX_UCHE_CLIENT_PF */
+
+    /* Setup CP ROQ (Read-Only Queue) and Mem Pool for A618 */
+    cp_wr(gpu, 0x8C1, 0x8040362C); /* A6XX_CP_ROQ_THRESHOLDS_1 */
+    cp_wr(gpu, 0x8C2, 0x010000C0); /* A6XX_CP_ROQ_THRESHOLDS_2 */
+    cp_wr(gpu, 0x8C3, 128);        /* A6XX_CP_MEM_POOL_SIZE */
+    cp_wr(gpu, 0x98D, 1);          /* A6XX_CP_AHB_CNTL */
+
+    /* Performance counters & busy contribution */
+    cp_wr(gpu, 0x500, 1);          /* A6XX_RBBM_PERFCTR_CNTL */
+    cp_wr(gpu, 0x50B, 0xFFFFFFFF); /* A6XX_RBBM_PERFCTR_GPU_BUSY_MASKED */
+
+    /* Disable register protection initially */
+    cp_wr(gpu, 0x84F, 0);          /* A6XX_CP_PROTECT_CNTL */
+
     const uint64_t sqe_iova = UINT64_C(0x100010000);
     const uint64_t ring_iova = UINT64_C(0x100020000);
     const uint64_t rptr_iova = UINT64_C(0x100030000);
@@ -213,6 +237,11 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
         uint32_t s1_881 = cp_rd(gpu, 0x881);
         r->cp_rptr = cp_rd(gpu, 0x806);
         r->cp_status1 = cp_rd(gpu, 0x825);
+        r->cp_intr = cp_rd(gpu, 0x823);
+        cp_wr(gpu, 0x908, 0);
+        r->cp_sqe_pc = cp_rd(gpu, 0x909);
+        cp_wr(gpu, 0x908, 1);
+        r->cp_sqe_op = cp_rd(gpu, 0x909);
         if (s0_883 == 0x1337BEEFu || s0_880 == 0x1337BEEFu) {
             r->cp_scratch0 = (s0_883 == 0x1337BEEFu) ? s0_883 : s0_880;
             r->cp_scratch1 = (s0_883 == 0x1337BEEFu) ? s1_884 : s1_881;
@@ -224,8 +253,9 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
         delay(100);
     }
 
-    printf("SURYA UNIXNU CP RESULT: WPTR=%u RPTR=%u SCR0=%#x SCR1=%#x STAT1=%#x\n",
-        r->cp_wptr, r->cp_rptr, r->cp_scratch0, r->cp_scratch1, r->cp_status1);
+    printf("SURYA UNIXNU CP RESULT: WPTR=%u RPTR=%u SCR0=%#x SCR1=%#x STAT1=%#x INTR=%#x PC=%#x OP=%#x\n",
+        r->cp_wptr, r->cp_rptr, r->cp_scratch0, r->cp_scratch1, r->cp_status1,
+        r->cp_intr, r->cp_sqe_pc, r->cp_sqe_op);
     delay(20000);
 }
 
@@ -293,7 +323,7 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
     ArmSmmu4KConfig config = {39, 36, physical, 32};
     ArmSmmu4KRange ranges[4] = {
         {iova, data_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
-        {UINT64_C(0x100010000), sqe_physical, 32768, ArmSmmu4KRead | ArmSmmu4KExecute | ArmSmmu4KPrivileged, 0, 2},
+        {UINT64_C(0x100010000), sqe_physical, 32768, ArmSmmu4KRead | ArmSmmu4KWrite | ArmSmmu4KExecute, 0, 2},
         {UINT64_C(0x100020000), ring_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
         {UINT64_C(0x100030000), rptr_physical, 16384, ArmSmmu4KRead | ArmSmmu4KWrite, 0, 2},
     };
@@ -367,17 +397,22 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
         r->active_sctlr, r->active_fsr, r->context_enabled ? "ACTIVE" : "INACTIVE");
     delay(20000);
 
-    printf("SURYA UNIXNU STEP 14: attach GPU stream %llu to context bank 0\n", SURYA_DT_USER_SID);
+    printf("SURYA UNIXNU STEP 14: attach GPU streams %llu and %llu to context bank 0\n",
+        SURYA_DT_USER_SID, SURYA_DT_SECURE_SID);
     delay(20000);
 
-    /* Pre-attach requirement: slot 0 S2CR set to FAULT */
+    /* Pre-attach requirement: slots 0 and 1 S2CR set to FAULT */
     io_write32((void *)smmu, 0xc00 + 0 * 4, 2u << 16);
+    io_write32((void *)smmu, 0xc00 + 1 * 4, 2u << 16);
     io_barrier(NULL);
 
-    ArmSmmu4KStream stream = { .slot = 0, .sid = (uint16_t)SURYA_DT_USER_SID };
+    ArmSmmu4KStream streams[2] = {
+        { .slot = 0, .sid = (uint16_t)SURYA_DT_USER_SID },
+        { .slot = 1, .sid = (uint16_t)SURYA_DT_SECURE_SID }
+    };
     ArmSmmu4KStreamState stream_state = {0};
     ArmSmmu4KStreamResult stream_res = {0};
-    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, &stream, 1, 0, &context, &stream_res);
+    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, streams, 2, 0, &context, &stream_res);
     printf("SURYA UNIXNU ATTACH: status=%d verified=%u writes=%u\n",
         attach_status, stream_res.streams_verified, stream_res.writes);
     delay(20000);

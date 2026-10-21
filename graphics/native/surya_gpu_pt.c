@@ -454,6 +454,8 @@ surya_gpu_pt_diagnostic(void)
                 unixnu.sqe_loaded ? "OK" : "NO",
                 unixnu.cp_wptr, unixnu.cp_rptr,
                 unixnu.cp_scratch0, unixnu.cp_scratch1, unixnu.cp_status1);
+            printf("SURYA UNIXNU CP DBG: INTR=%#x PC=%#x OP=%#x\n",
+                unixnu.cp_intr, unixnu.cp_sqe_pc, unixnu.cp_sqe_op);
             if (unixnu.cp_scratch0 == 0x1337BEEFu) {
                 printf("SURYA GPU ACCELERATION: VERIFIED (A618 CP EXECUTED PM4 PACKETS)\n");
             } else {

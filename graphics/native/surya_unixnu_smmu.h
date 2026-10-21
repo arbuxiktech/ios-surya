@@ -13,6 +13,7 @@ struct surya_unixnu_smmu_report {
     unsigned context_enabled, streams_attached;
     unsigned sqe_loaded, cp_started;
     uint32_t cp_wptr, cp_rptr, cp_scratch0, cp_scratch1, cp_status1;
+    uint32_t cp_intr, cp_sqe_pc, cp_sqe_op;
 };
 
 /* Decode real ID1 before touching a context bank. This only authorizes reads
