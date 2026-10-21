@@ -85,6 +85,8 @@ def main():
         print(f"Contains NT36672C touch driver string: {has_touch}")
         has_gpu_pt = b"SURYA GPU PAGE TABLE DIAGNOSTIC" in kbytes
         print(f"Contains GPU page table diagnostic string: {has_gpu_pt}")
+        has_native_adreno = b"SURYA: AGXAccelerator registered" in kbytes
+        print(f"Contains NativeAdreno AGXAccelerator driver string: {has_native_adreno}")
     else:
         print("ERROR: kernel.development.surya missing after extraction!")
         sys.exit(1)

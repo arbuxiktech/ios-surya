@@ -95,7 +95,7 @@ index 0000000..ea4f8e4
 +#endif /* _SURYA_NATIVE_ADRENO_H */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdreno.cpp b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 new file mode 100644
-index 0000000..754040b
+index 0000000..77327af
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 @@ -0,0 +1,502 @@
@@ -105,7 +105,7 @@ index 0000000..754040b
 + * 1:1 UniXNU architectural adherence: publishes AGXAccelerator (IOAcceleratorES)
 + * and AGXDeviceUserClient implementing the 16 ABI wire methods from NativeAdrenoABI.h.
 + */
-+#include "surya_native_adreno.h"
++#include "SuryaNativeAdreno.h"
 +
 +#if defined(ARM64_BOARD_CONFIG_SURYA) || defined(SWEET)
 +#include <IOKit/IOKitKeys.h>
@@ -119,7 +119,7 @@ index 0000000..754040b
 +int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence);
 +int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns);
 +uint64_t surya_adreno_cp_get_timestamp(void);
-+void surya_adreno_get_device_info(NativeAdrenoAbiDeviceInfo *info);
++void surya_adreno_get_device_info(void *info);
 +void proc_selfname(char *buf, int size);
 +}
 +
@@ -603,10 +603,10 @@ index 0000000..754040b
 +#endif /* ARM64_BOARD_CONFIG_SURYA || SWEET */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdrenoABI.h b/iokit/Kernel/arm/SuryaNativeAdrenoABI.h
 new file mode 100644
-index 0000000..3ca23cd
+index 0000000..94b714f
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdrenoABI.h
-@@ -0,0 +1,165 @@
+@@ -0,0 +1,186 @@
 +/* SPDX-License-Identifier: MIT */
 +#ifndef NATIVE_ADRENO_ABI_H
 +#define NATIVE_ADRENO_ABI_H
@@ -642,6 +642,27 @@ index 0000000..3ca23cd
 +    NativeAdrenoAbiMetadataBytes = 64,
 +    NativeAdrenoAbiMaxQueues = 8
 +};
++
++typedef struct NativeAdrenoAbiParams NativeAdrenoAbiParams;
++typedef struct NativeAdrenoAbiBoAlloc NativeAdrenoAbiBoAlloc;
++typedef struct NativeAdrenoAbiBoAllocReply NativeAdrenoAbiBoAllocReply;
++typedef struct NativeAdrenoAbiBoImport NativeAdrenoAbiBoImport;
++typedef struct NativeAdrenoAbiBoMap NativeAdrenoAbiBoMap;
++typedef struct NativeAdrenoAbiBoMapReply NativeAdrenoAbiBoMapReply;
++typedef struct NativeAdrenoAbiBoFree NativeAdrenoAbiBoFree;
++typedef struct NativeAdrenoAbiSubmitBuffer NativeAdrenoAbiSubmitBuffer;
++typedef struct NativeAdrenoAbiSubmit NativeAdrenoAbiSubmit;
++typedef struct NativeAdrenoAbiMetadata NativeAdrenoAbiMetadata;
++typedef struct NativeAdrenoAbiSubmitReply NativeAdrenoAbiSubmitReply;
++typedef struct NativeAdrenoAbiWaitFence NativeAdrenoAbiWaitFence;
++typedef struct NativeAdrenoAbiTimestamp NativeAdrenoAbiTimestamp;
++typedef struct NativeAdrenoAbiBoCpuMap NativeAdrenoAbiBoCpuMap;
++typedef struct NativeAdrenoAbiBoCpuMapReply NativeAdrenoAbiBoCpuMapReply;
++typedef struct NativeAdrenoAbiBoCpuUnmap NativeAdrenoAbiBoCpuUnmap;
++typedef struct NativeAdrenoAbiQueue NativeAdrenoAbiQueue;
++typedef struct NativeAdrenoAbiQueueReply NativeAdrenoAbiQueueReply;
++typedef struct NativeAdrenoAbiStatus NativeAdrenoAbiStatus;
++typedef struct NativeAdrenoAbiDeviceInfo NativeAdrenoAbiDeviceInfo;
 +struct NativeAdrenoAbiParams {
 +    uint32_t abi_version;
 +    uint32_t input_bits;          /* GPU VA bits below 2^input_bits */
@@ -692,7 +713,7 @@ index 0000000..3ca23cd
 +    uint64_t queue;               /* open queue; 0 is created by open() */
 +    uint64_t wait_fence;          /* zero or an earlier fence of this client */
 +    uint64_t wait_timeout_ns;     /* used only when wait_fence is nonzero */
-+    NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
++    struct NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
 +};
 +struct NativeAdrenoAbiMetadata {
 +    uint64_t handle;              /* object identity */

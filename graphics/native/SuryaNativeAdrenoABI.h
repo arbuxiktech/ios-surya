@@ -33,6 +33,27 @@ enum {
     NativeAdrenoAbiMetadataBytes = 64,
     NativeAdrenoAbiMaxQueues = 8
 };
+
+typedef struct NativeAdrenoAbiParams NativeAdrenoAbiParams;
+typedef struct NativeAdrenoAbiBoAlloc NativeAdrenoAbiBoAlloc;
+typedef struct NativeAdrenoAbiBoAllocReply NativeAdrenoAbiBoAllocReply;
+typedef struct NativeAdrenoAbiBoImport NativeAdrenoAbiBoImport;
+typedef struct NativeAdrenoAbiBoMap NativeAdrenoAbiBoMap;
+typedef struct NativeAdrenoAbiBoMapReply NativeAdrenoAbiBoMapReply;
+typedef struct NativeAdrenoAbiBoFree NativeAdrenoAbiBoFree;
+typedef struct NativeAdrenoAbiSubmitBuffer NativeAdrenoAbiSubmitBuffer;
+typedef struct NativeAdrenoAbiSubmit NativeAdrenoAbiSubmit;
+typedef struct NativeAdrenoAbiMetadata NativeAdrenoAbiMetadata;
+typedef struct NativeAdrenoAbiSubmitReply NativeAdrenoAbiSubmitReply;
+typedef struct NativeAdrenoAbiWaitFence NativeAdrenoAbiWaitFence;
+typedef struct NativeAdrenoAbiTimestamp NativeAdrenoAbiTimestamp;
+typedef struct NativeAdrenoAbiBoCpuMap NativeAdrenoAbiBoCpuMap;
+typedef struct NativeAdrenoAbiBoCpuMapReply NativeAdrenoAbiBoCpuMapReply;
+typedef struct NativeAdrenoAbiBoCpuUnmap NativeAdrenoAbiBoCpuUnmap;
+typedef struct NativeAdrenoAbiQueue NativeAdrenoAbiQueue;
+typedef struct NativeAdrenoAbiQueueReply NativeAdrenoAbiQueueReply;
+typedef struct NativeAdrenoAbiStatus NativeAdrenoAbiStatus;
+typedef struct NativeAdrenoAbiDeviceInfo NativeAdrenoAbiDeviceInfo;
 struct NativeAdrenoAbiParams {
     uint32_t abi_version;
     uint32_t input_bits;          /* GPU VA bits below 2^input_bits */
@@ -83,7 +104,7 @@ struct NativeAdrenoAbiSubmit {
     uint64_t queue;               /* open queue; 0 is created by open() */
     uint64_t wait_fence;          /* zero or an earlier fence of this client */
     uint64_t wait_timeout_ns;     /* used only when wait_fence is nonzero */
-    NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
+    struct NativeAdrenoAbiSubmitBuffer buffers[NativeAdrenoAbiMaxBuffers];
 };
 struct NativeAdrenoAbiMetadata {
     uint64_t handle;              /* object identity */

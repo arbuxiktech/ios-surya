@@ -4,7 +4,7 @@
  * 1:1 UniXNU architectural adherence: publishes AGXAccelerator (IOAcceleratorES)
  * and AGXDeviceUserClient implementing the 16 ABI wire methods from NativeAdrenoABI.h.
  */
-#include "surya_native_adreno.h"
+#include "SuryaNativeAdreno.h"
 
 #if defined(ARM64_BOARD_CONFIG_SURYA) || defined(SWEET)
 #include <IOKit/IOKitKeys.h>
@@ -18,7 +18,7 @@ int surya_adreno_smmu_unmap(uint64_t iova, size_t bytes);
 int surya_adreno_cp_submit(uint64_t ib_iova, uint32_t dwords, uint64_t *fence);
 int surya_adreno_cp_wait_fence(uint64_t fence, uint64_t timeout_ns);
 uint64_t surya_adreno_cp_get_timestamp(void);
-void surya_adreno_get_device_info(NativeAdrenoAbiDeviceInfo *info);
+void surya_adreno_get_device_info(void *info);
 void proc_selfname(char *buf, int size);
 }
 
