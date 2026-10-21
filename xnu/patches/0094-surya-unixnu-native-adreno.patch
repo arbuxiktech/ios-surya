@@ -95,7 +95,7 @@ index 0000000..81db7c5
 +#endif /* _SURYA_NATIVE_ADRENO_H */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdreno.cpp b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 new file mode 100644
-index 0000000..06bb4e2
+index 0000000..2e1d8b8
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 @@ -0,0 +1,549 @@
@@ -334,13 +334,13 @@ index 0000000..06bb4e2
 +AGXDeviceUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
 +    IOMemoryDescriptor **memory)
 +{
-+    if (type == 0x5343) { /* 'SC' - NativeAdrenoScanoutType (1080x2400 panel fb) */
-+        IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-+            0x9c000000ULL, (mach_vm_size_t)(1080 * 2400 * 4), kIODirectionInOut);
-+        if (!desc) return kIOReturnNoMemory;
-+        if (options) *options = kIOMapAnywhere | kIOMapInhibitCache;
-+        *memory = desc;
-+        return kIOReturnSuccess;
++    if (type == 0x5343) {
++        /*
++         * Reject userland mapping of physical framebuffer (0x9c000000):
++         * 0x9c000000 is outside XNU DRAM aperture (phys_base 0x100000000), causing
++         * phystokv_range assertion panic. The display is presented by SweetFramebuffer.
++         */
++        return kIOReturnUnsupported;
 +    }
 +
 +    if (!fLock) return kIOReturnNotReady;

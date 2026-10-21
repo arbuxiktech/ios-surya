@@ -233,13 +233,13 @@ IOReturn
 AGXDeviceUserClient::clientMemoryForType(UInt32 type, IOOptionBits *options,
     IOMemoryDescriptor **memory)
 {
-    if (type == 0x5343) { /* 'SC' - NativeAdrenoScanoutType (1080x2400 panel fb) */
-        IOMemoryDescriptor *desc = IOMemoryDescriptor::withPhysicalAddress(
-            0x9c000000ULL, (mach_vm_size_t)(1080 * 2400 * 4), kIODirectionInOut);
-        if (!desc) return kIOReturnNoMemory;
-        if (options) *options = kIOMapAnywhere | kIOMapInhibitCache;
-        *memory = desc;
-        return kIOReturnSuccess;
+    if (type == 0x5343) {
+        /*
+         * Reject userland mapping of physical framebuffer (0x9c000000):
+         * 0x9c000000 is outside XNU DRAM aperture (phys_base 0x100000000), causing
+         * phystokv_range assertion panic. The display is presented by SweetFramebuffer.
+         */
+        return kIOReturnUnsupported;
     }
 
     if (!fLock) return kIOReturnNotReady;
