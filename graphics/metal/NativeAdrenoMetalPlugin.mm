@@ -227,6 +227,10 @@ static id deviceForPort(unsigned port) {
         setenv("CA_DISABLE_FRAMEBUFFER_COMPRESSION", "1", 1);
         // The runtime's creation log reports each VkPipeline making's time to the device's sink, which the telemetry's V row sums.
         setenv("METAL2VULKAN_LOG_PIPELINES", "1", 0);
+        // Optimization 3 & 4: Enable Qualcomm UBWC and on-chip GMEM tile buffering in Turnip / freedreno
+        setenv("TU_DEBUG", "gmem", 0);
+        setenv("FD_MESA_DEBUG", "nobusywait", 0);
+        setenv("MESA_VK_WSI_PRESENT_MODE", "mailbox", 0);
         CFPreferencesSetAppValue(CFSTR("CAEnableFramebufferCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
         CFPreferencesSetAppValue(CFSTR("CAEnableIOSurfaceCompression"), kCFBooleanFalse, kCFPreferencesCurrentApplication);
         char candidates[4][512] = {};

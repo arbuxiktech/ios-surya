@@ -362,6 +362,19 @@ surya_gpu_power_check(struct surya_gpu_diag_state *st)
         return 4;
     }
 
+    /*
+     * Elevate GPU GFX3D core clock frequency to high-performance tier (800 MHz):
+     * Select parent 2 (CRC_DIV_PLL0_OUT_AUX2) with div 1 in GFX3D CFG_RCGR (0x1020),
+     * trigger CMD_UPDATE in CMD_RCGR (0x101c) and wait for hardware latch.
+     */
+    uint32_t cur_cfg = sgpu_rd(gpucc, 0x1020);
+    sgpu_wr(gpucc, 0x1020, (cur_cfg & ~0x71fu) | (2u << 8));
+    sgpu_wr(gpucc, 0x101c, sgpu_rd(gpucc, 0x101c) | 1u);
+    for (unsigned i = 0; i < 2000; ++i) {
+        if (!(sgpu_rd(gpucc, 0x101c) & 1u)) break;
+        delay(1);
+    }
+
     /* Enable GX GFX3D root clock (0x1054) */
     sgpu_wr(gpucc, 0x1054, sgpu_rd(gpucc, 0x1054) | 1u);
     st->gx_clk = sgpu_rd(gpucc, 0x1054);

@@ -37,8 +37,14 @@ def main():
         'CAEnableIOSurfaceCompression': False,
         'CAMaximumFrameRate': 120,
         'CAFrameRateRangeMaximum': 120,
+        'CAFrameRateRangeMinimum': 60,
         'CADisableProMotionLimiting': True,
         'AppleMaxFrameRate': 120,
+        'SBReduceTransparency': True,
+        'ReduceTransparency': True,
+        'CAReduceTransparency': True,
+        'SBReduceMotion': True,
+        'ReduceMotion': True,
     }
     pref_bytes = plistlib.dumps(pref_dict, fmt=plistlib.FMT_XML)
 

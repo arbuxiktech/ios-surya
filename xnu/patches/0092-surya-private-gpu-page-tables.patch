@@ -203,10 +203,10 @@ index 0000000..e0f8ac8
 +#endif
 diff --git a/bsd/dev/surya_gpu_pt.c b/bsd/dev/surya_gpu_pt.c
 new file mode 100644
-index 0000000..5cf7690
+index 0000000..5440b37
 --- /dev/null
 +++ b/bsd/dev/surya_gpu_pt.c
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,488 @@
 +/* Offline ARM LPAE table test & Adreno GPU power/clock bringup diagnostic. */
 +#if defined(ARM64_BOARD_CONFIG_SURYA)
 +#include <sys/param.h>
@@ -569,6 +569,19 @@ index 0000000..5cf7690
 +        st->gx_on = st->gx_init;
 +        st->gx_clk = sgpu_rd(gpucc, 0x1054);
 +        return 4;
++    }
++
++    /*
++     * Elevate GPU GFX3D core clock frequency to high-performance tier (800 MHz):
++     * Select parent 2 (CRC_DIV_PLL0_OUT_AUX2) with div 1 in GFX3D CFG_RCGR (0x1020),
++     * trigger CMD_UPDATE in CMD_RCGR (0x101c) and wait for hardware latch.
++     */
++    uint32_t cur_cfg = sgpu_rd(gpucc, 0x1020);
++    sgpu_wr(gpucc, 0x1020, (cur_cfg & ~0x71fu) | (2u << 8));
++    sgpu_wr(gpucc, 0x101c, sgpu_rd(gpucc, 0x101c) | 1u);
++    for (unsigned i = 0; i < 2000; ++i) {
++        if (!(sgpu_rd(gpucc, 0x101c) & 1u)) break;
++        delay(1);
 +    }
 +
 +    /* Enable GX GFX3D root clock (0x1054) */

@@ -89,6 +89,8 @@ def main():
         print(f"Contains NativeAdreno AGXAccelerator driver string: {has_native_adreno}")
         has_gpu_addon = b"SURYA GPU ADDON: sheng-gpu-addon=1 detected" in kbytes
         print(f"Contains GPU addon mount & staging string: {has_gpu_addon}")
+        has_120hz = b"DisplayMaxRefreshRate" in kbytes
+        print(f"Contains 120Hz ProMotion display properties string: {has_120hz}")
     else:
         print("ERROR: kernel.development.surya missing after extraction!")
         sys.exit(1)

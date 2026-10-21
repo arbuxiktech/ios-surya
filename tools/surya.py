@@ -34,7 +34,7 @@ APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb
 APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                         ' suryagpummu=1')
 APPLE_METAL_CMDLINE = (APPLE_GUI_CMDLINE.replace('cpus=1', 'cpus=8').replace('sweetfb_hz=30', 'sweetfb_hz=120') +
-                       ' -no_slto_panic sheng-gpu-addon=1')
+                       ' -no_slto_panic sheng-gpu-addon=1 sheng-fb-gpu=1')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
 
