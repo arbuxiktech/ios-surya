@@ -255,7 +255,23 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     if (!args) return kIOReturnBadArgument;
     if (!fLock) return kIOReturnNotReady;
 
-    switch (selector) {
+    uint32_t method = selector;
+    const void *in_data = args->structureInput;
+    size_t in_size = args->structureInputSize;
+
+    /* Support UniXNU Darwin tunnelled calls (DW_TUNNEL_MAGIC 0x4e544e4c 'NTNL') */
+    if (args->structureInput && args->structureInputSize >= 8 &&
+        *(const uint32_t *)args->structureInput == 0x4e544e4cu) {
+        const uint32_t *hdr = (const uint32_t *)args->structureInput;
+        if (hdr[1] == 0xffffffffu) {
+            return kIOReturnSuccess; /* admitted selector probe */
+        }
+        method = hdr[1];
+        in_data = (const uint8_t *)args->structureInput + 8;
+        in_size = args->structureInputSize - 8;
+    }
+
+    switch (method) {
     case NativeAdrenoMethodQuery: {
         if (args->structureOutputSize < sizeof(NativeAdrenoAbiParams)) return kIOReturnBadArgument;
         NativeAdrenoAbiParams *rep = (NativeAdrenoAbiParams *)args->structureOutput;
@@ -269,9 +285,9 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoAlloc: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiBoAlloc) ||
+        if (in_size < sizeof(NativeAdrenoAbiBoAlloc) ||
             args->structureOutputSize < sizeof(NativeAdrenoAbiBoAllocReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoAlloc *req = (const NativeAdrenoAbiBoAlloc *)args->structureInput;
+        const NativeAdrenoAbiBoAlloc *req = (const NativeAdrenoAbiBoAlloc *)in_data;
         NativeAdrenoAbiBoAllocReply *rep = (NativeAdrenoAbiBoAllocReply *)args->structureOutput;
         if (!req->bytes || req->bytes > (UINT64_C(256) * 1024 * 1024)) return kIOReturnBadArgument;
 
@@ -299,9 +315,9 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoMap: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiBoMap) ||
+        if (in_size < sizeof(NativeAdrenoAbiBoMap) ||
             args->structureOutputSize < sizeof(NativeAdrenoAbiBoMapReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoMap *req = (const NativeAdrenoAbiBoMap *)args->structureInput;
+        const NativeAdrenoAbiBoMap *req = (const NativeAdrenoAbiBoMap *)in_data;
         NativeAdrenoAbiBoMapReply *rep = (NativeAdrenoAbiBoMapReply *)args->structureOutput;
 
         IOLockLock(fLock);
@@ -333,8 +349,8 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoFree: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiBoFree)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoFree *req = (const NativeAdrenoAbiBoFree *)args->structureInput;
+        if (in_size < sizeof(NativeAdrenoAbiBoFree)) return kIOReturnBadArgument;
+        const NativeAdrenoAbiBoFree *req = (const NativeAdrenoAbiBoFree *)in_data;
         IOLockLock(fLock);
         surya_adreno_bo *bo = findBo(req->handle);
         if (!bo) {
@@ -347,9 +363,9 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodSubmit: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiSubmit) ||
+        if (in_size < sizeof(NativeAdrenoAbiSubmit) ||
             args->structureOutputSize < sizeof(NativeAdrenoAbiSubmitReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiSubmit *req = (const NativeAdrenoAbiSubmit *)args->structureInput;
+        const NativeAdrenoAbiSubmit *req = (const NativeAdrenoAbiSubmit *)in_data;
         NativeAdrenoAbiSubmitReply *rep = (NativeAdrenoAbiSubmitReply *)args->structureOutput;
         if (!req->buffer_count || req->buffer_count > NativeAdrenoAbiMaxBuffers) return kIOReturnBadArgument;
 
@@ -371,8 +387,8 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodWaitFence: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiWaitFence)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiWaitFence *req = (const NativeAdrenoAbiWaitFence *)args->structureInput;
+        if (in_size < sizeof(NativeAdrenoAbiWaitFence)) return kIOReturnBadArgument;
+        const NativeAdrenoAbiWaitFence *req = (const NativeAdrenoAbiWaitFence *)in_data;
         int timeout = surya_adreno_cp_wait_fence(req->fence, req->timeout_ns);
         return timeout ? kIOReturnTimeout : kIOReturnSuccess;
     }
@@ -395,8 +411,8 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodSetMetadata: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiMetadata)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiMetadata *req = (const NativeAdrenoAbiMetadata *)args->structureInput;
+        if (in_size < sizeof(NativeAdrenoAbiMetadata)) return kIOReturnBadArgument;
+        const NativeAdrenoAbiMetadata *req = (const NativeAdrenoAbiMetadata *)in_data;
         IOLockLock(fLock);
         fMetadataBytes = req->bytes < sizeof(fMetadata) ? req->bytes : (uint32_t)sizeof(fMetadata);
         bcopy(req->text, fMetadata, fMetadataBytes);
@@ -428,9 +444,9 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoCpuMap: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiBoCpuMap) ||
+        if (in_size < sizeof(NativeAdrenoAbiBoCpuMap) ||
             args->structureOutputSize < sizeof(NativeAdrenoAbiBoCpuMapReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoCpuMap *req = (const NativeAdrenoAbiBoCpuMap *)args->structureInput;
+        const NativeAdrenoAbiBoCpuMap *req = (const NativeAdrenoAbiBoCpuMap *)in_data;
         NativeAdrenoAbiBoCpuMapReply *rep = (NativeAdrenoAbiBoCpuMapReply *)args->structureOutput;
 
         IOLockLock(fLock);
@@ -460,9 +476,9 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoImport: {
-        if (args->structureInputSize < sizeof(NativeAdrenoAbiBoImport) ||
+        if (in_size < sizeof(NativeAdrenoAbiBoImport) ||
             args->structureOutputSize < sizeof(NativeAdrenoAbiBoAllocReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoImport *req = (const NativeAdrenoAbiBoImport *)args->structureInput;
+        const NativeAdrenoAbiBoImport *req = (const NativeAdrenoAbiBoImport *)in_data;
         NativeAdrenoAbiBoAllocReply *rep = (NativeAdrenoAbiBoAllocReply *)args->structureOutput;
         if (!req->bytes || (req->address & 4095ULL) || (req->bytes & 4095ULL)) return kIOReturnBadArgument;
 
