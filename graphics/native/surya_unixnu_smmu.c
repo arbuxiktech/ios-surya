@@ -109,16 +109,6 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
     printf("SURYA UNIXNU STEP 16: initialize Adreno 618 CP ringbuffer\n");
     delay(20000);
 
-    /* Exit secure mode so CP non-secure translations operate */
-    cp_wr(gpu, 0xF400, 0);  /* A6XX_RBBM_SECVID_TRUST_CNTL */
-
-    /* Power on SPTPRAC if GMU mapped */
-    vm_offset_t gmu = ml_io_map(SURYA_DT_GMU_PA, SURYA_DT_GMU_SIZE);
-    if (gmu) {
-        *(volatile uint32_t *)(gmu + (0x1A881 * 4)) = 0x00778000;
-        __asm__ volatile("dmb oshst" ::: "memory");
-    }
-
     /* Enable 64-bit addressing mode across GPU pipeline */
     cp_wr(gpu, 0x842, 1);  /* A6XX_CP_ADDR_MODE_CNTL */
     cp_wr(gpu, 0xC01, 1);  /* A6XX_VSC_ADDR_MODE_CNTL */
@@ -134,8 +124,6 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
     cp_wr(gpu, 0xF810, 1); /* A6XX_RBBM_SECVID_TSB_ADDR_MODE_CNTL */
 
     /* Setup UCHE (Unified Cache Hierarchy Engine) */
-    cp_wr(gpu, 0xE3A, 0x10200F9);  /* A6XX_UCHE_GBIF_GX_CONFIG */
-    cp_wr(gpu, 0xE01, 1u << 23);   /* A6XX_UCHE_MODE_CNTL: mal=64 */
     cp_wr(gpu, 0xE05, 0xffffffc0); /* A6XX_UCHE_WRITE_RANGE_MAX_LO */
     cp_wr(gpu, 0xE06, 0x0001ffff); /* A6XX_UCHE_WRITE_RANGE_MAX_HI */
     cp_wr(gpu, 0xE07, 0xfffff000); /* A6XX_UCHE_WRITE_THRU_BASE_LO */
@@ -150,7 +138,6 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
     cp_wr(gpu, 0x8C1, 0x8040362C); /* A6XX_CP_ROQ_THRESHOLDS_1 */
     cp_wr(gpu, 0x8C2, 0x010000C0); /* A6XX_CP_ROQ_THRESHOLDS_2 */
     cp_wr(gpu, 0x8C3, 128);        /* A6XX_CP_MEM_POOL_SIZE */
-    cp_wr(gpu, 0x9E07, 0x300 << 11); /* A6XX_PC_DBG_ECO_CNTL */
     cp_wr(gpu, 0x98D, 1);          /* A6XX_CP_AHB_CNTL */
 
     /* Performance counters & busy contribution */
@@ -229,9 +216,9 @@ static void execute_cp_ring(struct surya_unixnu_smmu_report *r, vm_offset_t ring
     rb[idx++] = 0x1337BEEF;
     rb[idx++] = 0xFEEDCAFE;
 
-    /* Clean and invalidate cache for ring buffer */
+    /* Clean cache for ring buffer */
     for (uintptr_t p = (uintptr_t)ring; p < (uintptr_t)ring + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb sy; isb" ::: "memory");
 
@@ -319,18 +306,18 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
     /* Populate test data buffer with sentinel pattern */
     *(volatile uint64_t *)data = 0xCAFEBABEDEADBEEFULL;
 
-    /* Clean and invalidate cache to Point of Coherency (PoC) for data and firmware buffers */
+    /* Clean cache to Point of Coherency (PoC) for data and firmware buffers */
     for (uintptr_t p = (uintptr_t)data; p < (uintptr_t)data + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     for (uintptr_t p = (uintptr_t)sqe; p < (uintptr_t)sqe + 32768; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     for (uintptr_t p = (uintptr_t)ring; p < (uintptr_t)ring + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     for (uintptr_t p = (uintptr_t)rptr; p < (uintptr_t)rptr + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb sy; isb" ::: "memory");
 
@@ -364,16 +351,16 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
             data_physical + off) return 106;
     }
 
-    /* Clean and invalidate cache to Point of Coherency (PoC) for table memory so SMMU hardware walker sees descriptors in DDR */
+    /* Clean cache to Point of Coherency (PoC) for table memory so SMMU hardware walker sees descriptors in DDR */
     for (uintptr_t p = (uintptr_t)tables; p < (uintptr_t)tables + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb sy; isb" ::: "memory");
 
     /* Populate test data buffer with sentinel pattern */
     *(volatile uint64_t *)data = 0xCAFEBABEDEADBEEFULL;
     for (uintptr_t p = (uintptr_t)data; p < (uintptr_t)data + 16384; p += 64) {
-        __asm__ volatile("dc civac, %0" : : "r"(p) : "memory");
+        __asm__ volatile("dc cvac, %0" : : "r"(p) : "memory");
     }
     __asm__ volatile("dsb sy; isb" ::: "memory");
 
@@ -395,22 +382,6 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
         .write64 = io_write64,
         .barrier = io_barrier,
     };
-
-    /* Program stock DTB attach-impl-defs into SMMU GR0 */
-    static const struct { uint32_t reg; uint32_t val; } kAttachImplDefs[] = {
-        {0x6000, 0x00002378}, {0x6060, 0x00001055}, {0x678c, 0x00000008},
-        {0x6794, 0x00000028}, {0x6800, 0x00000006}, {0x6900, 0x000003ff},
-        {0x6924, 0x00000204}, {0x6928, 0x00011000}, {0x6930, 0x00000800},
-        {0x6960, 0xffffffff}, {0x6b64, 0x001a5551}, {0x6b68, 0x9a82a382}
-    };
-    for (unsigned i = 0; i < sizeof(kAttachImplDefs)/sizeof(kAttachImplDefs[0]); ++i) {
-        io_write32((void *)smmu, kAttachImplDefs[i].reg, kAttachImplDefs[i].val);
-    }
-    io_barrier(NULL);
-
-    /* Qualcomm QSMMUv2 Auxiliary Control: NSH, ISH, OSH override */
-    io_write32((void *)smmu, r->cb_offset + 0x4, 0x70000000);
-    io_barrier(NULL);
 
     printf("SURYA UNIXNU STEP 12: program and activate context bank 0\n");
     delay(20000);
@@ -454,15 +425,6 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
     printf("SURYA UNIXNU STEP 15: SMR0=%#x S2CR0=%#x (%s)\n",
         r->smr0, r->s2cr0, r->streams_attached ? "ATTACHED" : "UNATTACHED");
     delay(20000);
-
-    /* Full SMMU CB0 TLB invalidation */
-    io_write32((void *)smmu, r->cb_offset + 0x618, 0);
-    io_write32((void *)smmu, r->cb_offset + 0x7f0, 0);
-    for (unsigned poll = 0; poll < 1000; ++poll) {
-        if (!(read32(smmu, r->cb_offset + 0x7f4) & 1)) break;
-        delay(1);
-    }
-    io_barrier(NULL);
 
     if (r->sqe_loaded && r->streams_attached) {
         execute_cp_ring(r, ring);
