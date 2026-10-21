@@ -674,7 +674,7 @@ index 0000000..56d3d2e
 +#endif
 diff --git a/bsd/dev/ArmSmmu4KStreams.c b/bsd/dev/ArmSmmu4KStreams.c
 new file mode 100644
-index 0000000..4145ef2
+index 0000000..4450fdf
 --- /dev/null
 +++ b/bsd/dev/ArmSmmu4KStreams.c
 @@ -0,0 +1,157 @@
@@ -720,7 +720,7 @@ index 0000000..4145ef2
 +            unsigned live=valid(r->id0,smr,s2cr);
 +            if(attached) {
 +                if(smr!=(valid_smr(r->id0)|s[own].sid) || s2cr!=(bank|valid_s2cr(r->id0)))return ArmSmmu4KStateMismatch;
-+            } else if((s2cr&~valid_s2cr(r->id0))!=FAULT ||
++            } else if((s2cr&(3u<<16))!=FAULT ||
 +                (live && smr!=(valid_smr(r->id0)|s[own].sid)))return ArmSmmu4KBusy;
 +            ++r->streams_verified;
 +        } else if(valid(r->id0,smr,s2cr)) {
@@ -751,10 +751,10 @@ index 0000000..4145ef2
 +         * an old or corrupted SID from an initially invalid slot. */
 +        size_t smr=0x800+4*state->streams[i].slot;
 +        uint32_t match=valid_smr(state->id0)|state->streams[i].sid;
-+        if(wr(io,at,FAULT,r) || io->barrier(io->cookie) || rd(io,at,&value,r) || value!=FAULT ||
++        if(wr(io,at,FAULT,r) || io->barrier(io->cookie) || rd(io,at,&value,r) || (value&(3u<<16))!=FAULT ||
 +            wr(io,smr,match,r) || io->barrier(io->cookie) || rd(io,smr,&value,r) || value!=match ||
 +            wr(io,at,FAULT|valid_s2cr(state->id0),r) || io->barrier(io->cookie) ||
-+            rd(io,at,&value,r) || value!=(FAULT|valid_s2cr(state->id0)))failed=1;
++            rd(io,at,&value,r) || (value&((3u<<16)|valid_s2cr(state->id0)))!=(FAULT|valid_s2cr(state->id0)))failed=1;
 +        else ++r->streams_faulted;
 +    }
 +    return failed;
@@ -877,10 +877,10 @@ index 0000000..e0dc7b8
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..289c9e9
+index 0000000..24fe67e
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,287 @@
+@@ -0,0 +1,288 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
 + * DT-ordered KGSL clocks use branch definitions from the matching driver.
 + */
@@ -1008,7 +1008,8 @@ index 0000000..289c9e9
 +    context.lower_tables = &built;
 +    context.id0 = r->id0; context.id2 = r->id2;
 +    context.asid = 1;
-+    context.stall_on_fault = 1;
++    context.stall_on_fault = 0;
++    context.continue_after_fault = 1;
 +    context.coherent_walk = 0;
 +
 +    ArmSmmu4KIo io = {

@@ -40,7 +40,7 @@ static ArmSmmu4KStatus scan(const ArmSmmu4KIo *io,const ArmSmmu4KStream *s,unsig
             unsigned live=valid(r->id0,smr,s2cr);
             if(attached) {
                 if(smr!=(valid_smr(r->id0)|s[own].sid) || s2cr!=(bank|valid_s2cr(r->id0)))return ArmSmmu4KStateMismatch;
-            } else if((s2cr&~valid_s2cr(r->id0))!=FAULT ||
+            } else if((s2cr&(3u<<16))!=FAULT ||
                 (live && smr!=(valid_smr(r->id0)|s[own].sid)))return ArmSmmu4KBusy;
             ++r->streams_verified;
         } else if(valid(r->id0,smr,s2cr)) {
@@ -71,10 +71,10 @@ static int quarantine(const ArmSmmu4KIo *io,const ArmSmmu4KStreamState *state,un
          * an old or corrupted SID from an initially invalid slot. */
         size_t smr=0x800+4*state->streams[i].slot;
         uint32_t match=valid_smr(state->id0)|state->streams[i].sid;
-        if(wr(io,at,FAULT,r) || io->barrier(io->cookie) || rd(io,at,&value,r) || value!=FAULT ||
+        if(wr(io,at,FAULT,r) || io->barrier(io->cookie) || rd(io,at,&value,r) || (value&(3u<<16))!=FAULT ||
             wr(io,smr,match,r) || io->barrier(io->cookie) || rd(io,smr,&value,r) || value!=match ||
             wr(io,at,FAULT|valid_s2cr(state->id0),r) || io->barrier(io->cookie) ||
-            rd(io,at,&value,r) || value!=(FAULT|valid_s2cr(state->id0)))failed=1;
+            rd(io,at,&value,r) || (value&((3u<<16)|valid_s2cr(state->id0)))!=(FAULT|valid_s2cr(state->id0)))failed=1;
         else ++r->streams_faulted;
     }
     return failed;

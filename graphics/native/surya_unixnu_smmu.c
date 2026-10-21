@@ -125,7 +125,8 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
     context.lower_tables = &built;
     context.id0 = r->id0; context.id2 = r->id2;
     context.asid = 1;
-    context.stall_on_fault = 1;
+    context.stall_on_fault = 0;
+    context.continue_after_fault = 1;
     context.coherent_walk = 0;
 
     ArmSmmu4KIo io = {
