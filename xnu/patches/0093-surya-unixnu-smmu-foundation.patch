@@ -837,10 +837,10 @@ index 0000000..4450fdf
 +}
 diff --git a/bsd/dev/surya_unixnu_smmu.h b/bsd/dev/surya_unixnu_smmu.h
 new file mode 100644
-index 0000000..eff371d
+index 0000000..b8254a0
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.h
-@@ -0,0 +1,37 @@
+@@ -0,0 +1,38 @@
 +/* UniXNU ArmSmmu4K integration for SURYA. Live context and stream routing. */
 +#ifndef SURYA_UNIXNU_SMMU_H
 +#define SURYA_UNIXNU_SMMU_H
@@ -857,6 +857,7 @@ index 0000000..eff371d
 +    unsigned sqe_loaded, cp_started;
 +    uint32_t cp_wptr, cp_rptr, cp_scratch0, cp_scratch1, cp_status1;
 +    uint32_t cp_intr, cp_sqe_pc, cp_sqe_op;
++    unsigned attach_phase, attach_writes;
 +};
 +
 +/* Decode real ID1 before touching a context bank. This only authorizes reads
@@ -880,10 +881,10 @@ index 0000000..eff371d
 +#endif
 diff --git a/bsd/dev/surya_unixnu_smmu.c b/bsd/dev/surya_unixnu_smmu.c
 new file mode 100644
-index 0000000..6018fa4
+index 0000000..d4dfdbb
 --- /dev/null
 +++ b/bsd/dev/surya_unixnu_smmu.c
-@@ -0,0 +1,535 @@
+@@ -0,0 +1,540 @@
 +/* SURYA bridge to pinned UniXNU ArmSmmu4K: live context & stream attachment.
 + * DT-ordered KGSL clocks use branch definitions from the matching driver.
 + */
@@ -1294,14 +1295,18 @@ index 0000000..6018fa4
 +    ArmSmmu4KStreamState stream_state = {0};
 +    ArmSmmu4KStreamResult stream_res = {0};
 +    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, &stream, 1, 0, &context, &stream_res);
-+    printf("SURYA UNIXNU ATTACH: status=%d verified=%u writes=%u\n",
-+        attach_status, stream_res.streams_verified, stream_res.writes);
++    printf("SURYA UNIXNU ATTACH: status=%d phase=%u verified=%u writes=%u\n",
++        attach_status, stream_res.phase, stream_res.streams_verified, stream_res.writes);
 +    delay(20000);
 +
++    r->attach_phase = stream_res.phase;
++    r->attach_writes = stream_res.writes;
 +    r->smr0 = read32(smmu, 0x800 + 0 * 4);
 +    r->s2cr0 = read32(smmu, 0xc00 + 0 * 4);
-+    if (attach_status != ArmSmmu4KSuccess) return 40 + (int)attach_status;
-+    r->streams_attached = stream_state.attached;
++    if (stream_state.attached || (attach_status == ArmSmmu4KSuccess) ||
++        (r->smr0 == (0x80000000u | (uint32_t)SURYA_DT_USER_SID) && (r->s2cr0 & 0x30000) == 0)) {
++        r->streams_attached = 1;
++    }
 +    printf("SURYA UNIXNU STEP 15: SMR0=%#x S2CR0=%#x (%s)\n",
 +        r->smr0, r->s2cr0, r->streams_attached ? "ATTACHED" : "UNATTACHED");
 +    delay(20000);
@@ -1310,6 +1315,7 @@ index 0000000..6018fa4
 +        execute_cp_ring(r, ring);
 +    }
 +
++    if (attach_status != ArmSmmu4KSuccess && !r->streams_attached) return 40 + (int)attach_status;
 +    return 0;
 +}
 +
@@ -1411,7 +1417,7 @@ index 0000000..6018fa4
 +    delay(20000);
 +    r->stage = 4;
 +    r->code = live_tables(r, smmu);
-+    if (!r->code) {
++    if (!r->code || r->streams_attached) {
 +        r->stage = 5;
 +        if (r->context_enabled) r->stage = 6;
 +        if (r->streams_attached) r->stage = 7;

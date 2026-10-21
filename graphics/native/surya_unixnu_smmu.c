@@ -408,14 +408,18 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
     ArmSmmu4KStreamState stream_state = {0};
     ArmSmmu4KStreamResult stream_res = {0};
     ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, &stream, 1, 0, &context, &stream_res);
-    printf("SURYA UNIXNU ATTACH: status=%d verified=%u writes=%u\n",
-        attach_status, stream_res.streams_verified, stream_res.writes);
+    printf("SURYA UNIXNU ATTACH: status=%d phase=%u verified=%u writes=%u\n",
+        attach_status, stream_res.phase, stream_res.streams_verified, stream_res.writes);
     delay(20000);
 
+    r->attach_phase = stream_res.phase;
+    r->attach_writes = stream_res.writes;
     r->smr0 = read32(smmu, 0x800 + 0 * 4);
     r->s2cr0 = read32(smmu, 0xc00 + 0 * 4);
-    if (attach_status != ArmSmmu4KSuccess) return 40 + (int)attach_status;
-    r->streams_attached = stream_state.attached;
+    if (stream_state.attached || (attach_status == ArmSmmu4KSuccess) ||
+        (r->smr0 == (0x80000000u | (uint32_t)SURYA_DT_USER_SID) && (r->s2cr0 & 0x30000) == 0)) {
+        r->streams_attached = 1;
+    }
     printf("SURYA UNIXNU STEP 15: SMR0=%#x S2CR0=%#x (%s)\n",
         r->smr0, r->s2cr0, r->streams_attached ? "ATTACHED" : "UNATTACHED");
     delay(20000);
@@ -424,6 +428,7 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
         execute_cp_ring(r, ring);
     }
 
+    if (attach_status != ArmSmmu4KSuccess && !r->streams_attached) return 40 + (int)attach_status;
     return 0;
 }
 
@@ -525,7 +530,7 @@ surya_unixnu_smmu_capture(struct surya_unixnu_smmu_report *r)
     delay(20000);
     r->stage = 4;
     r->code = live_tables(r, smmu);
-    if (!r->code) {
+    if (!r->code || r->streams_attached) {
         r->stage = 5;
         if (r->context_enabled) r->stage = 6;
         if (r->streams_attached) r->stage = 7;

@@ -449,6 +449,10 @@ surya_gpu_pt_diagnostic(void)
             unixnu.context_enabled ? "ACTIVE" : "INACTIVE",
             unixnu.active_sctlr, unixnu.active_fsr, unixnu.smr0, unixnu.s2cr0,
             unixnu.streams_attached ? "ATTACHED" : "UNATTACHED");
+        if (unixnu.attach_phase || unixnu.attach_writes) {
+            printf("SURYA UNIXNU ATTACH DBG: phase=%u writes=%u\n",
+                unixnu.attach_phase, unixnu.attach_writes);
+        }
         if (unixnu.cp_started) {
             printf("SURYA UNIXNU CP: SQE=%s WPTR=%u RPTR=%u SCR0=%#x SCR1=%#x STAT1=%#x\n",
                 unixnu.sqe_loaded ? "OK" : "NO",
