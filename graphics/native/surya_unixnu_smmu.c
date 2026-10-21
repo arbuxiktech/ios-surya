@@ -397,22 +397,17 @@ static int live_tables(struct surya_unixnu_smmu_report *r, vm_offset_t smmu)
         r->active_sctlr, r->active_fsr, r->context_enabled ? "ACTIVE" : "INACTIVE");
     delay(20000);
 
-    printf("SURYA UNIXNU STEP 14: attach GPU streams %llu and %llu to context bank 0\n",
-        SURYA_DT_USER_SID, SURYA_DT_SECURE_SID);
+    printf("SURYA UNIXNU STEP 14: attach GPU stream %llu to context bank 0\n", SURYA_DT_USER_SID);
     delay(20000);
 
-    /* Pre-attach requirement: slots 0 and 1 S2CR set to FAULT */
+    /* Pre-attach requirement: slot 0 S2CR set to FAULT */
     io_write32((void *)smmu, 0xc00 + 0 * 4, 2u << 16);
-    io_write32((void *)smmu, 0xc00 + 1 * 4, 2u << 16);
     io_barrier(NULL);
 
-    ArmSmmu4KStream streams[2] = {
-        { .slot = 0, .sid = (uint16_t)SURYA_DT_USER_SID },
-        { .slot = 1, .sid = (uint16_t)SURYA_DT_SECURE_SID }
-    };
+    ArmSmmu4KStream stream = { .slot = 0, .sid = (uint16_t)SURYA_DT_USER_SID };
     ArmSmmu4KStreamState stream_state = {0};
     ArmSmmu4KStreamResult stream_res = {0};
-    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, streams, 2, 0, &context, &stream_res);
+    ArmSmmu4KStatus attach_status = ArmSmmu4KAttachStreams(&io, &stream_state, &stream, 1, 0, &context, &stream_res);
     printf("SURYA UNIXNU ATTACH: status=%d verified=%u writes=%u\n",
         attach_status, stream_res.streams_verified, stream_res.writes);
     delay(20000);
