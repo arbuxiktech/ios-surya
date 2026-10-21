@@ -1,3 +1,5 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 8c35a16..a644cd4 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
 @@ -15,7 +15,12 @@
@@ -14,7 +16,7 @@
   *   28 GetDotPitch, 72 Enable/DisableNotifications [func, refcon, type, 0]
   * Everything else is accepted and logged once.
   *
-@@ -53,6 +58,7 @@
+@@ -53,6 +58,7 @@ enum {
  	kSweetFBSwapWait                = 6,
  	kSweetFBGetID                   = 7,
  	kSweetFBGetDisplaySize          = 8,
@@ -22,7 +24,7 @@
  	kSweetFBIsMainDisplay           = 18,
  	kSweetFBGetDotPitch             = 28,
  	kSweetFBNotifications           = 72,
-@@ -108,6 +114,8 @@
+@@ -109,6 +115,8 @@ public:
  	uint8_t       fPending[SWEET_FB_SWAP_REC_SIZE];     /* latest swap, not yet shown */
  	bool          fDirty;
  	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
@@ -31,7 +33,7 @@
  
  	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
  	void addClient(IOMobileFramebufferUserClient *client);
-@@ -216,6 +224,24 @@
+@@ -226,6 +234,24 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
  		    (IOMobileFramebufferUserClient *)fb->fClients->getObject(i);
  		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
  	}
@@ -50,13 +52,13 @@
 +				}
 +			}
 +		}
-+		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++		sender->setTimeoutUS(fb->fVsyncUS);
 +		return;
 +	}
  	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
- 	uint8_t *rec = NULL;
- 	if (flush) {
-@@ -506,6 +532,19 @@
+ 	uint8_t rec[SWEET_FB_SWAP_REC_SIZE];
+ 	bool do_present = false;
+@@ -567,6 +593,19 @@ IOMobileFramebufferUserClient::externalMethod(uint32_t selector, IOExternalMetho
  			    args->scalarInput[0] ? "on" : "off");
  		}
  		break;

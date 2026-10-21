@@ -1,9 +1,12 @@
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 17b8022..ad7aa42 100644
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -91,11 +91,15 @@
+@@ -91,11 +91,16 @@ public:
  	OSArray      *fClients;
  	uint32_t      fSwapID;
  	bool          fConsolePaused;
++	uint32_t      fVsyncUS;       /* vsync timer period in microseconds */
 +	uint8_t       fPending[SWEET_FB_SWAP_REC_SIZE];     /* latest swap, not yet shown */
 +	bool          fDirty;
 +	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
@@ -16,58 +19,89 @@
  };
  
  OSDefineMetaClassAndStructors(AppleCLCD, IOMobileFramebuffer);
-@@ -156,6 +160,9 @@
+@@ -156,7 +161,17 @@ AppleCLCD::start(IOService *provider)
  		IOLog("SWEET FB: no vsync timer\n");
  		return false;
  	}
-+	uint32_t hz = 60;
+-	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
++	uint32_t hz = 120;
 +	PE_parse_boot_argn("sweetfb_hz", &hz, sizeof(hz));
-+	fFlushTicks = (hz == 0 || hz >= 60) ? 1 : 60 / hz;
- 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
++	if (hz == 0) hz = 120;
++	fFlushTicks = 1;
++	fVsyncUS = 1000000 / hz;
++	fVsync->setTimeoutUS(fVsyncUS);
++	setProperty("DisplayMaxRefreshRate", (unsigned long long)hz, 32);
++	setProperty("DisplayMinRefreshRate", 60ULL, 32);
++	setProperty("DisplayCurrentRefreshRate", (unsigned long long)hz, 32);
++	setProperty("supports-promotion", kOSBooleanTrue);
++	setProperty("DisplayProMotion", kOSBooleanTrue);
  
  	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
-@@ -171,6 +178,7 @@
+ 	setProperty("external", false);
+@@ -171,12 +186,14 @@ void
  AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
  {
  	AppleCLCD *fb = (AppleCLCD *)owner;
-+	sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++	sender->setTimeoutUS(fb->fVsyncUS);
  	uint64_t now = mach_absolute_time();
  	uint64_t count = ++fb->fVsyncCount;
++	uint64_t interval_ns = (uint64_t)fb->fVsyncUS * 1000ULL;
  	uint64_t values[6] = {
-@@ -185,8 +193,20 @@
+ 		(uint32_t)count, (uint32_t)(count >> 32),
+ 		(uint32_t)now, (uint32_t)(now >> 32),
+-		0, 0,
++		(uint32_t)interval_ns, (uint32_t)(interval_ns >> 32),
+ 	};
+ 
+ 	IOLockLock(fb->fLock);
+@@ -185,8 +202,18 @@ AppleCLCD::vsyncFired(OSObject *owner, IOTimerEventSource *sender)
  		    (IOMobileFramebufferUserClient *)fb->fClients->getObject(i);
  		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
  	}
 +	bool flush = fb->fDirty && (count % fb->fFlushTicks) == 0;
-+	uint8_t *rec = NULL;
++	uint8_t rec[SWEET_FB_SWAP_REC_SIZE];
++	bool do_present = false;
 +	if (flush) {
-+		rec = (uint8_t *)IOMallocData(SWEET_FB_SWAP_REC_SIZE);
-+		if (rec != NULL) {
-+			memcpy(rec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
-+			fb->fDirty = false;
-+		}
++		memcpy(rec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
++		fb->fDirty = false;
++		do_present = true;
 +	}
  	IOLockUnlock(fb->fLock);
 -	sender->setTimeoutUS(SWEET_FB_VSYNC_US);
-+	if (rec != NULL) {
++	if (do_present) {
 +		fb->present(rec);
-+		IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
 +	}
  }
  
  void
-@@ -220,14 +240,56 @@
+@@ -220,14 +247,72 @@ static uint32_t sweet_fb_swaps_logged;
  static uint64_t sweet_fb_swap_count;
  
  /* Copy each enabled layer's surface into the panel memory (no scaling). */
-+/* Fast 32-byte chunk burst-write copy to write-combined / panel memory */
++/* Fast 64-byte chunk burst-write copy to write-combined / panel memory */
 +static inline void
 +sweet_fast_copy_row(void *dst, const void *src, size_t bytes)
 +{
 +	uint8_t *d = (uint8_t *)dst;
 +	const uint8_t *s = (const uint8_t *)src;
-+	size_t chunks = bytes >> 5; /* 32 bytes per chunk */
-+	while (chunks--) {
++	size_t chunks64 = bytes >> 6; /* 64 bytes per chunk */
++	while (chunks64--) {
++		asm volatile(
++			"ldp x8, x9, [%0], #16\n"
++			"ldp x10, x11, [%0], #16\n"
++			"ldp x12, x13, [%0], #16\n"
++			"ldp x14, x15, [%0], #16\n"
++			"stp x8, x9, [%1], #16\n"
++			"stp x10, x11, [%1], #16\n"
++			"stp x12, x13, [%1], #16\n"
++			"stp x14, x15, [%1], #16\n"
++			: "+r"(s), "+r"(d)
++			:
++			: "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "memory"
++		);
++	}
++	size_t chunks32 = (bytes & 63) >> 5;
++	while (chunks32--) {
 +		asm volatile(
 +			"ldp x8, x9, [%0], #16\n"
 +			"ldp x10, x11, [%0], #16\n"
@@ -91,33 +125,32 @@
 +}
 +
 +/*
-+ * A swap records the frame: presentation flushes at 60 Hz (sweetfb_hz boot-arg)
-+ * using 32-byte burst transfers directly to write-combined panel RAM.
++ * A swap records the frame: presentation flushes at 120 Hz ProMotion (sweetfb_hz)
++ * using 64-byte burst transfers directly to write-combined panel RAM.
 + */
  void
  AppleCLCD::swap(const uint8_t *rec)
  {
+-	uint32_t mask = get32(rec, 0x104);
+-
+-	if ((++sweet_fb_swap_count % 100) == 0) {
 +	IOLockLock(fLock);
 +	memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
 +	fDirty = true;
 +	IOLockUnlock(fLock);
 +	if ((++sweet_fb_swap_count % 1000) == 0) {
-+		IOLog("SWEET FB: %llu swaps\n", sweet_fb_swap_count);
-+	}
+ 		IOLog("SWEET FB: %llu swaps\n", sweet_fb_swap_count);
+ 	}
 +}
 +
 +void
 +AppleCLCD::present(const uint8_t *rec)
 +{
- 	uint32_t mask = get32(rec, 0x104);
--
--	if ((++sweet_fb_swap_count % 100) == 0) {
--		IOLog("SWEET FB: %llu swaps\n", sweet_fb_swap_count);
--	}
++	uint32_t mask = get32(rec, 0x104);
  
  	if (!fConsolePaused) {
  		int quiet = 0;
-@@ -293,10 +355,17 @@
+@@ -293,10 +378,21 @@ AppleCLCD::swap(const uint8_t *rec)
  			src = 0;
  		}
  		if (src != 0 && bpe == 4) {
@@ -130,11 +163,15 @@
 +				    (const void *)(src + s->offset + (uint64_t)sy * s->bytesPerRow),
 +				    (size_t)h * fRowBytes);
 +			} else {
++				uint8_t *dst_ptr = (uint8_t *)(fPixels + (uint64_t)dy * fRowBytes + (uint64_t)dx * 4);
++				const uint8_t *src_ptr = (const uint8_t *)(src + s->offset + (uint64_t)sy * s->bytesPerRow + (uint64_t)sx * 4);
++				size_t row_len = (size_t)w * 4;
++				uint32_t dst_stride = fRowBytes;
++				uint32_t src_stride = s->bytesPerRow;
 +				for (int32_t y = 0; y < h; y++) {
-+					sweet_fast_copy_row(
-+					    (void *)(fPixels + (uint64_t)(dy + y) * fRowBytes + (uint64_t)dx * 4),
-+					    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
-+					    (size_t)w * 4);
++					sweet_fast_copy_row(dst_ptr, src_ptr, row_len);
++					dst_ptr += dst_stride;
++					src_ptr += src_stride;
 +				}
  			}
  		}

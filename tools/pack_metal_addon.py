@@ -34,7 +34,11 @@ def main():
     pref_dict = {
         'CAEnableDeepFramebuffer': False,
         'CAEnableFramebufferCompression': False,
-        'CAEnableIOSurfaceCompression': False
+        'CAEnableIOSurfaceCompression': False,
+        'CAMaximumFrameRate': 120,
+        'CAFrameRateRangeMaximum': 120,
+        'CADisableProMotionLimiting': True,
+        'AppleMaxFrameRate': 120,
     }
     pref_bytes = plistlib.dumps(pref_dict, fmt=plistlib.FMT_XML)
 
@@ -70,11 +74,14 @@ def main():
         add_data(tar, 'ngpu/trust.json', (EXTRACTED / 'trust.json').read_bytes())
         count += 5
 
-        # 4. Display preferences
+        # 4. Display preferences (120 Hz ProMotion)
         for d in ['mobile', 'root']:
             add_data(tar, f'{d}/Library/Preferences/backboardd.plist', pref_bytes)
             add_data(tar, f'{d}/Library/Preferences/.GlobalPreferences.plist', pref_bytes)
-            count += 2
+            add_data(tar, f'{d}/Library/Preferences/com.apple.CoreAnimation.plist', pref_bytes)
+            add_data(tar, f'{d}/Library/Preferences/com.apple.backboardd.plist', pref_bytes)
+            add_data(tar, f'{d}/Library/Preferences/com.apple.springboard.plist', pref_bytes)
+            count += 5
 
     tar_size = OUT_TAR.stat().st_size
     print(f'Wrote {OUT_TAR} ({count} entries, {tar_size} bytes / {tar_size/1024/1024:.2f} MB)')
