@@ -22,7 +22,11 @@ Resolved CP INTR=0x84 (illegal instruction error at PC=0, OP=0) from photo 0cf84
 - Added full SMMU CB0 `TLBIALL` + `TLBSYNC` invalidation after stream attachment.
 - Added `A6XX_CP_HW_FAULT` (`0x821`) to diagnostic reporting.
 - All 59 unit tests pass.
-- Commit `7db2378`; CI `39641847973` running.
+- Commit `7db2378`; CI `39641847973` passed.
+- Kernel SHA256: `2744d0e30320a16b9649c42098350b2a26084829de53ac46ca4d9b2bef4409aa`.
+- Image `research/unixnu-cp-ready/boot-unixnu-smmu.img`, SHA256 `8e656138380348ea81d07603c9645be1726bc5d141f6074a31a4688818098096`.
+- Temporary boot accepted: Sending 0.409s / Booting 5.093s exit 0. No partition flash.
+- Awaiting screen photo confirming SQE entry execution, WPTR/RPTR advance, and SCR0=0x1337BEEF (`SURYA GPU ACCELERATION: VERIFIED`).
 
 ## Adreno 618 Hardware Stream Verification & CP Ring Execution (2026-10-21)
 
