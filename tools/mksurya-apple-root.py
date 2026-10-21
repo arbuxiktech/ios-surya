@@ -20,9 +20,11 @@ p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware
 p.add_argument('--sqe-firmware', type=Path, help='pinned Adreno 618 SQE firmware')
 
 p.add_argument('--gpu-table-diagnostic', action='store_true', help='pause before launchd for offline XNU GPU table allocation checks')
+p.add_argument('--metal', action='store_true', help='native Metal accelerated boot with GPU addon union mount')
+p.add_argument('--metal-bundle', type=Path, help='path to surya-metal-bundle.tar archive')
 
 a = p.parse_args()
-if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic)) > 1:
+if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic, a.metal)) > 1:
     raise SystemExit('select only one boot profile')
 kernel = a.kernel.read_bytes()
 if b'SURYA: bounded Apple root writes armed' not in kernel:
@@ -30,18 +32,18 @@ if b'SURYA: bounded Apple root writes armed' not in kernel:
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-cmdline = surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE)
+cmdline = surya.APPLE_METAL_CMDLINE if a.metal else (surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE))
 if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
 ROOT = Path(__file__).resolve().parents[1]
-if a.touch_firmware or a.gmu_firmware or a.sqe_firmware or a.gpu_table_diagnostic:
+if a.touch_firmware or a.gmu_firmware or a.sqe_firmware or a.gpu_table_diagnostic or a.metal_bundle:
     tree, end = adt.parse(a.adt.read_bytes())
     if end != a.adt.stat().st_size:
         raise SystemExit('unexpected trailing ADT bytes')
     chosen = surya.child(tree, 'chosen')
     if a.touch_firmware:
-        if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic):
+        if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic or a.metal):
             raise SystemExit('touch firmware requires a touch-enabled boot profile')
         if b'SURYA TOUCH: loading verified Tianma image' not in kernel:
             raise SystemExit('kernel lacks the bounded Tianma SRAM loader')
@@ -53,12 +55,15 @@ if a.touch_firmware or a.gmu_firmware or a.sqe_firmware or a.gpu_table_diagnosti
         if len(gmu_fw) != 32768:
             raise SystemExit(f'invalid GMU firmware size: {len(gmu_fw)}')
         surya.setprop(chosen, 'surya-gmu-firmware', gmu_fw)
-    sqe_path = a.sqe_firmware or ((ROOT / 'research/firmware/a630_sqe.fw') if a.gpu_table_diagnostic else None)
+    sqe_path = a.sqe_firmware or ((ROOT / 'research/firmware/a630_sqe.fw') if (a.gpu_table_diagnostic or a.metal) else None)
     if sqe_path and sqe_path.exists():
         sqe_fw = sqe_path.read_bytes()
         if len(sqe_fw) != 32136:
             raise SystemExit(f'invalid SQE firmware size: {len(sqe_fw)}')
         surya.setprop(chosen, 'surya-sqe-firmware', sqe_fw)
+    if a.metal_bundle:
+        bundle_tar = a.metal_bundle.read_bytes()
+        surya.setprop(chosen, 'surya-metal-bundle', bundle_tar)
     adt_path = a.out.with_suffix('.adt')
     adt_path.parent.mkdir(parents=True, exist_ok=True)
     adt_path.write_bytes(adt.serialize(tree))

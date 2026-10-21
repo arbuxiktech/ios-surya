@@ -1,0 +1,376 @@
+diff --git a/bsd/kern/surya_gpu_addon.c b/bsd/kern/surya_gpu_addon.c
+new file mode 100644
+index 0000000..b99181a
+--- /dev/null
++++ b/bsd/kern/surya_gpu_addon.c
+@@ -0,0 +1,268 @@
++/*
++ * SPDX-License-Identifier: MIT
++ *
++ * SURYA / Poco X3 NFC native GPU addon mount and staging.
++ * Union-mounts /private/var/ngpu/addons over /System/Library/Extensions (exposing NativeAdrenoMetal.bundle)
++ * and /private/var/ngpu/daemons over /System/Library/LaunchDaemons (exposing adrenoprobed).
++ * Unpacks the owner-built Metal bundle archive from the ADT property surya-metal-bundle on first boot.
++ */
++
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <sys/kernel.h>
++#include <sys/proc_internal.h>
++#include <sys/kauth.h>
++#include <sys/vnode.h>
++#include <sys/vnode_internal.h>
++#include <sys/mount_internal.h>
++#include <sys/sysproto.h>
++#include <sys/fcntl.h>
++#include <sys/stat.h>
++#include <sys/errno.h>
++#include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
++
++extern volatile int native_bindfs_boot_mount;
++volatile int native_gpu_addon_stage = 0;
++volatile int native_gpu_addon_status = -1;
++volatile int native_gpu_addon2_stage = 0;
++volatile int native_gpu_addon2_status = -1;
++
++struct tar_header {
++    char name[100];
++    char mode[8];
++    char uid[8];
++    char gid[8];
++    char size[12];
++    char mtime[12];
++    char chksum[8];
++    char typeflag;
++    char linkname[100];
++    char magic[6];
++    char version[2];
++    char uname[32];
++    char gname[32];
++    char devmajor[8];
++    char devminor[8];
++    char prefix[155];
++};
++
++static uint64_t
++surya_tar_octal(const char *p, size_t len)
++{
++    uint64_t v = 0;
++    while (len && (*p == ' ' || *p == '0')) { p++; len--; }
++    while (len && *p >= '0' && *p <= '7') {
++        v = (v << 3) | (*p++ - '0');
++        len--;
++    }
++    return v;
++}
++
++static int
++surya_mkdir(proc_t p, user_addr_t scratch, const char *path, int mode)
++{
++    struct mkdir_args req;
++    req.path = scratch + 0x1000;
++    req.mode = mode;
++    int32_t retval = 0;
++    int err = copyout(path, req.path, strlen(path) + 1);
++    if (err) return err;
++    return mkdir(p, &req, &retval);
++}
++
++static void
++surya_mkdir_p(proc_t p, user_addr_t scratch, char *path)
++{
++    char *s = path;
++    if (*s == '/') s++;
++    while ((s = strchr(s, '/')) != NULL) {
++        *s = '\0';
++        (void)surya_mkdir(p, scratch, path, 0755);
++        *s = '/';
++        s++;
++    }
++    (void)surya_mkdir(p, scratch, path, 0755);
++}
++
++static void
++surya_mkdir_parent(proc_t p, user_addr_t scratch, const char *path)
++{
++    char buf[512];
++    strlcpy(buf, path, sizeof(buf));
++    char *slash = strrchr(buf, '/');
++    if (slash && slash != buf) {
++        *slash = '\0';
++        surya_mkdir_p(p, scratch, buf);
++    }
++}
++
++static int
++surya_write_file(proc_t p, const char *path, const void *data, uint64_t size, int mode)
++{
++    vfs_context_t ctx = vfs_context_current();
++    vnode_t vp = NULLVP;
++    int fmode = 0x0601; /* O_CREAT | O_WRONLY | O_TRUNC */
++    int error = vnode_open(path, fmode, mode, 0, &vp, ctx);
++    if (error) {
++        printf("SURYA GPU ADDON: vnode_open('%s') failed: %d\n", path, error);
++        return error;
++    }
++    int aresid = 0;
++    error = vn_rdwr(UIO_WRITE, vp, (caddr_t)data, (int)size, 0, UIO_SYSSPACE, IO_NODELOCKED, vfs_context_ucred(ctx), &aresid, p);
++    if (error) {
++        printf("SURYA GPU ADDON: vn_rdwr('%s') failed: %d (aresid=%d)\n", path, error, aresid);
++    }
++    vnode_close(vp, 0, ctx);
++    return error;
++}
++
++static void
++surya_extract_tar(proc_t p, user_addr_t scratch, const uint8_t *tar, size_t total_size)
++{
++    size_t off = 0;
++    unsigned count = 0;
++    while (off + 512 <= total_size) {
++        const struct tar_header *hdr = (const struct tar_header *)(tar + off);
++        if (hdr->name[0] == '\0') {
++            break;
++        }
++        uint64_t file_size = surya_tar_octal(hdr->size, sizeof(hdr->size));
++        int mode = (int)surya_tar_octal(hdr->mode, sizeof(hdr->mode));
++        if (!mode) mode = 0644;
++
++        char path[512];
++        if (hdr->prefix[0]) {
++            snprintf(path, sizeof(path), "/private/var/%.155s/%.100s", hdr->prefix, hdr->name);
++        } else {
++            snprintf(path, sizeof(path), "/private/var/%.100s", hdr->name);
++        }
++        size_t plen = strlen(path);
++        if (plen > 1 && path[plen - 1] == '/') path[plen - 1] = '\0';
++
++        if (hdr->typeflag == '5') {
++            surya_mkdir_p(p, scratch, path);
++        } else if (hdr->typeflag == '0' || hdr->typeflag == '\0') {
++            surya_mkdir_parent(p, scratch, path);
++            const uint8_t *content = tar + off + 512;
++            int err = surya_write_file(p, path, content, file_size, mode);
++            if (!err) {
++                count++;
++            }
++        }
++        off += 512 + ((file_size + 511) & ~511ULL);
++    }
++    printf("SURYA GPU ADDON: unpacked %u files from bundle archive\n", count);
++}
++
++static void
++native_gpu_addon_mount(proc_t p, user_addr_t scratch, user_addr_t offset, const char *source, size_t source_size,
++    const char *point, size_t point_size, const char *visible, const char *visible2, const char *own,
++    volatile int *stage, volatile int *status)
++{
++    vnode_t probe = NULLVP;
++    int error;
++    *stage = 1;
++    error = vnode_lookup(source, 0, &probe, vfs_context_current());
++    if (error) {
++        *status = error;
++        printf("SURYA GPU ADDON: source lookup '%s' failed: %d\n", source, error);
++        return;
++    }
++    vnode_put(probe);
++    probe = NULLVP;
++    *stage = 2;
++    struct mount_args request = {
++        .type = scratch + offset,
++        .path = scratch + offset + 0x20,
++        .flags = MNT_RDONLY | MNT_UNION,
++        .data = scratch + offset + 0x100
++    };
++    int32_t result = 0;
++    if ((error = copyout("bindfs", request.type, 7)) ||
++        (error = copyout(point, request.path, point_size)) ||
++        (error = copyout(source, request.data, source_size))) {
++        *status = error;
++        printf("SURYA GPU ADDON: copyout failed: %d\n", error);
++        return;
++    }
++    native_bindfs_boot_mount = 1;
++    error = mount(p, &request, &result);
++    native_bindfs_boot_mount = 0;
++    if (error) {
++        *status = error;
++        printf("SURYA GPU ADDON: mount('%s' over '%s') failed: %d\n", source, point, error);
++        return;
++    }
++    *stage = 3;
++    error = vnode_lookup(visible, 0, &probe, vfs_context_current());
++    if (error && visible2) {
++        error = vnode_lookup(visible2, 0, &probe, vfs_context_current());
++    }
++    if (!error) {
++        vnode_put(probe);
++        probe = NULLVP;
++        *stage = 4;
++        error = vnode_lookup(own, 0, &probe, vfs_context_current());
++        if (!error) {
++            vnode_put(probe);
++            probe = NULLVP;
++            *stage = 5;
++        }
++    }
++    *status = error;
++    printf("SURYA GPU ADDON: mounted '%s' over '%s' -> stage=%d status=%d\n", source, point, *stage, *status);
++}
++
++void
++surya_gpu_addon_prepare(proc_t p, user_addr_t scratch)
++{
++    uint32_t enabled = 0;
++    if (!PE_parse_boot_argn("sheng-gpu-addon", &enabled, sizeof(enabled)) || enabled != 1) {
++        return;
++    }
++    printf("SURYA GPU ADDON: sheng-gpu-addon=1 detected, checking /private/var/ngpu\n");
++
++    vnode_t probe = NULLVP;
++    int error = vnode_lookup("/private/var/ngpu/addons/NativeAdrenoMetal.bundle/Info.plist", 0, &probe, vfs_context_current());
++    if (error == 0) {
++        vnode_put(probe);
++        printf("SURYA GPU ADDON: NativeAdrenoMetal.bundle already on disk\n");
++    } else {
++        printf("SURYA GPU ADDON: bundle absent (err=%d), searching ADT for surya-metal-bundle\n", error);
++        DTEntry chosen;
++        void const *tar_data = NULL;
++        unsigned int tar_size = 0;
++        if (DTLookupEntry(NULL, "/chosen", &chosen) == kSuccess &&
++            SecureDTGetProperty(chosen, "surya-metal-bundle", &tar_data, &tar_size) == kSuccess &&
++            tar_size > 0 && tar_data != NULL) {
++            printf("SURYA GPU ADDON: extracting surya-metal-bundle (%u bytes)...\n", tar_size);
++            surya_extract_tar(p, scratch, (const uint8_t *)tar_data, tar_size);
++        } else {
++            printf("SURYA GPU ADDON: no surya-metal-bundle property found in /chosen\n");
++        }
++    }
++
++    static const char extensions_source[] = "/private/var/ngpu/addons";
++    static const char extensions_point[]  = "/System/Library/Extensions";
++    static const char daemons_source[]    = "/private/var/ngpu/daemons";
++    static const char daemons_point[]     = "/System/Library/LaunchDaemons";
++
++    native_gpu_addon_mount(p, scratch, 0x400, extensions_source, sizeof(extensions_source),
++        extensions_point, sizeof(extensions_point),
++        "/System/Library/Extensions/AGXMetalA10.bundle",
++        "/System/Library/Extensions/AppleMobileFileIntegrity.kext",
++        "/System/Library/Extensions/NativeAdrenoMetal.bundle/Info.plist",
++        &native_gpu_addon_stage, &native_gpu_addon_status);
++
++    native_gpu_addon_mount(p, scratch, 0x600, daemons_source, sizeof(daemons_source),
++        daemons_point, sizeof(daemons_point),
++        "/System/Library/LaunchDaemons/com.apple.backboardd.plist",
++        NULL,
++        "/System/Library/LaunchDaemons/org.blu-sharky.adrenoprobed.plist",
++        &native_gpu_addon2_stage, &native_gpu_addon2_status);
++}
++
++#endif /* ARM64_BOARD_CONFIG_SURYA */
+diff --git a/bsd/conf/files b/bsd/conf/files
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -382,6 +382,7 @@
+ bsd/kern/kern_crossarch.c		standard
+ bsd/kern/kern_cs.c			standard
+ bsd/kern/sweet_amfi.c			standard
++bsd/kern/surya_gpu_addon.c		standard
+ bsd/kern/kern_csr.c			optional config_csr
+ bsd/kern/kern_debug.c			standard
+ bsd/kern/kern_symfile.c			standard
+diff --git a/bsd/miscfs/bindfs/bindfs.h b/bsd/miscfs/bindfs/bindfs.h
+--- a/bsd/miscfs/bindfs/bindfs.h
++++ b/bsd/miscfs/bindfs/bindfs.h
+@@ -81,6 +81,7 @@
+ //#define BINDFS_DEBUG 0
+ 
+ #define BINDM_CACHE 0x0001
++#define BINDM_FORCE_ROOT 0x80000000ULL
+ #define BINDM_CASEINSENSITIVE 0x0000000000000002
+ 
+ typedef int (*vop_t)(void *);
+diff --git a/bsd/miscfs/bindfs/bind_vfsops.c b/bsd/miscfs/bindfs/bind_vfsops.c
+--- a/bsd/miscfs/bindfs/bind_vfsops.c
++++ b/bsd/miscfs/bindfs/bind_vfsops.c
+@@ -78,6 +78,8 @@
+ 
+ #include "bindfs.h"
+ 
++volatile int native_bindfs_boot_mount = 0;
++
+ #define BINDFS_ENTITLEMENT "com.apple.private.bindfs-allow"
+ 
+ #define SIZEOF_MEMBER(type, member) (sizeof(((type *)0)->member))
+@@ -140,7 +142,7 @@
+ 	}
+ 
+ 	/* check entitlement */
+-	if (!IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
++	if (!native_bindfs_boot_mount && !IOCurrentTaskHasEntitlement(BINDFS_ENTITLEMENT)) {
+ 		return EPERM;
+ 	}
+ 
+@@ -231,6 +233,9 @@
+ 	sp->f_flags = flags;
+ 
+ 	xmp->bindm_flags = BINDM_CASEINSENSITIVE; /* default to case insensitive */
++	if (native_bindfs_boot_mount) {
++		xmp->bindm_flags |= BINDM_FORCE_ROOT;
++	}
+ 
+ 	error = bindfs_vfs_getlowerattr(vnode_mount(lowerrootvp), &vfa, ctx);
+ 	if (error == 0) {
+diff --git a/bsd/miscfs/bindfs/bind_vnops.c b/bsd/miscfs/bindfs/bind_vnops.c
+--- a/bsd/miscfs/bindfs/bind_vnops.c
++++ b/bsd/miscfs/bindfs/bind_vnops.c
+@@ -105,6 +105,14 @@
+ 		vnode_put(lowervp);
+ 
+ 		if (error == 0) {
++			if (MOUNTTOBINDMOUNT(vnode_mount(args->a_vp))->bindm_flags & BINDM_FORCE_ROOT) {
++				if (VATTR_IS_ACTIVE(args->a_vap, va_uid)) {
++					VATTR_RETURN(args->a_vap, va_uid, 0);
++				}
++				if (VATTR_IS_ACTIVE(args->a_vap, va_gid)) {
++					VATTR_RETURN(args->a_vap, va_gid, 0);
++				}
++			}
+ 			if (VATTR_IS_ACTIVE(args->a_vap, va_fsid)) {
+ 				/* fix up fsid so it doesn't say the underlying fs*/
+ 				VATTR_RETURN(args->a_vap, va_fsid, vfs_statfs(vnode_mount(args->a_vp))->f_fsid.val[0]);
+diff --git a/osfmk/kern/startup.c b/osfmk/kern/startup.c
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -470,10 +470,12 @@
+ 		if (PE_parse_boot_argn("-show_pointers", &namep, sizeof(namep))) {
+ 			doprnt_hide_pointers = FALSE;
+ 		}
+-		if (PE_parse_boot_argn("-no_slto_panic", &namep, sizeof(namep))) {
+-			extern boolean_t spinlock_timeout_panic;
+-			spinlock_timeout_panic = FALSE;
+-		}
++	}
++	/* Owner device: honour -no_slto_panic without a debugger-enabled device policy. */
++	if (PE_parse_boot_argn("-no_slto_panic", &namep, sizeof(namep))) {
++		extern boolean_t spinlock_timeout_panic;
++		spinlock_timeout_panic = FALSE;
++	}
+ 
+ 	kernel_bootstrap_log("console_init");
+ diff --git a/bsd/kern/kern_exec.c b/bsd/kern/kern_exec.c
+--- a/bsd/kern/kern_exec.c
++++ b/bsd/kern/kern_exec.c
+@@ -6882,4 +6882,8 @@
+ 	(void) mach_vm_allocate_kernel(map, &scratch_addr, map_page_size, VM_FLAGS_ANYWHERE, VM_KERN_MEMORY_NONE);
++#if defined(ARM64_BOARD_CONFIG_SURYA)
++	extern void surya_gpu_addon_prepare(proc_t p, user_addr_t scratch);
++	surya_gpu_addon_prepare(p, (user_addr_t)scratch_addr);
++#endif
+ #if CONFIG_MEMORYSTATUS
+ 	(void) memorystatus_init_at_boot_snapshot();
+ #endif /* CONFIG_MEMORYSTATUS */
