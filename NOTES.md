@@ -21,6 +21,13 @@ Configured Stream 0 (SURYA_DT_USER_SID = 0) attachment to CB0 via ArmSmmu4KAttac
 with S2CR0 fault preflight.
 Updated on-screen diagnostic loop to display live CB0 active SCTLR/FSR and SMR0/S2CR0 stream matching.
 All 59 unit tests pass.
+Commit d8281fa0f269a89c9d4ff8e47321e1a5db4e9c70; CI 39503418788 passed.
+Verified kernel SHA256 c2f8fe7a6b8852ab9a34550de8f1d848edd58231ed6059462197c17d4e5103d1.
+Image research/unixnu-live-context-ready/boot-unixnu-smmu.img, 20246528 bytes,
+SHA256 e2c03ccadca087f99bbcee935215086469b8cec7177fefb04789e2c470d42302.
+Verified CI checksum, ARM64, live CB0 / stream markers, exact payload/firmware/board profile.
+Temporary boot accepted Sending 0.493s / Booting 5.094s exit 0. No partition flash.
+Awaiting owner screen photo confirming STEP 12-15 CB0 activation (SCTLR bit 0) and stream 0 attachment (SMR0/S2CR0).
 
 ## GPUCC HLOS1 SMMU clock vote enable & patch 0093 cleanup (2026-10-20)
 
