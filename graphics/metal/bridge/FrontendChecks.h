@@ -15,6 +15,10 @@
 #include <cstring>
 #include <vector>
 
+@protocol MTLSharedEventWaiting <NSObject>
+- (BOOL)waitUntilSignaledValue:(uint64_t)value timeoutMS:(uint64_t)milliseconds;
+@end
+
 namespace frontendchecks {
 struct Report {
     unsigned failed, last;
@@ -379,7 +383,7 @@ static void run(id<MTLDevice> device, id<MTLLibrary> library, id<MTLLibrary> fcL
                 }
                 CHECK(!dispatch_semaphore_wait(notified, dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC)) && heard >= 3,
                       "listener notification %llu", (unsigned long long)heard);
-                CHECK([event waitUntilSignaledValue:3 timeoutMS:10], "waitUntilSignaledValue");
+                CHECK([(id<MTLSharedEventWaiting>)event waitUntilSignaledValue:3 timeoutMS:10], "waitUntilSignaledValue");
             }
         }
         step(r, 0x660b);

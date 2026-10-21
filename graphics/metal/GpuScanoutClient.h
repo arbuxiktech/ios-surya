@@ -10,7 +10,11 @@
 #include <stdint.h>
 #include <unistd.h>
 #include "GpuScanoutPresenter.h"
+#if __has_include("../NativeMobileDisplay/NativeGOPWire.h")
 #include "../NativeMobileDisplay/NativeGOPWire.h"
+#elif __has_include("NativeGOPWire.h")
+#include "NativeGOPWire.h"
+#endif
 
 namespace gpuscanout {
 
