@@ -9,6 +9,24 @@ Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
 
 ## Current SURYA state
 
+## Adreno 618 Stream 0 Restore & CP Execution Test (2026-10-21)
+
+Resolved SMMU attach status 47 (ArmSmmu4KStateMismatch) caused by attempting slot 1 attach on SM7150:
+- Reverted stream attachment in `surya_unixnu_smmu.c` to single GPU master Stream 0 (`slot = 0, sid = 0`), which previously attached cleanly to CB0 (`ATTACHED`, `SCTLR=0x1167`).
+- Preserved full Adreno 618 CP pipeline initialization:
+  - UCHE cache ranges, cache ways (4), filter control (`0x804`), and client prefetch (`1`).
+  - ROQ thresholds (`0x8040362C`, `0x010000C0`) and memory pool size (`128`).
+  - CP AHB control (`1`), performance counters (`0x500 = 1`, `0x50B = 0xFFFFFFFF`), and unprotect (`0x84F = 0`).
+  - Unprivileged SQE microcode mapping (R/W/X, no privileged bit).
+  - Authentic A6xx `CP_ME_INIT` (11 words), `CP_SET_PROTECTED_MODE` (0), and Type 4 scratch packet emission (`0x1337BEEF`).
+  - Real-time CP diagnostic polling (WPTR, RPTR, SCR0, SCR1, STAT1, INTR, SQE_PC, SQE_OP).
+- All 59 unit tests pass.
+- Commit `9fdfcad`; CI `39631877550` passed.
+- Kernel SHA256: `6ba8e6f0eb98e00d2b7a1230629e140064f156c04fc1ead56e10fe4729d5a0d9`.
+- Image `research/unixnu-cp-ready/boot-unixnu-smmu.img`, SHA256 `3a82522c752106202d9d226e52fbff0a62fda00300a92ea4e7d4db8d170f3297`.
+- Temporary boot accepted: Sending 0.493s / Booting 5.093s exit 0. No partition flash.
+- Awaiting screen photo confirming CB0 ATTACHED, STEP 16-18 CP ringbuffer execution, WPTR/RPTR advance, and SCR0=0x1337BEEF.
+
 ## Adreno 618 Pipeline Init: UCHE, ROQ, Mem Pool, Dual Stream & Unprivileged SQE (2026-10-21)
 
 Resolved CP fetch stall identified from photo 85d5baea (FSR=0x400 confirmed 0 SMMU translation/permission faults):
