@@ -493,7 +493,7 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
 
         IOMemoryDescriptor *desc = IOMemoryDescriptor::withAddressRange(
             (mach_vm_address_t)req->address, (mach_vm_size_t)req->bytes,
-            kIODirectionInOut, fTask);
+            static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryMapperNone), fTask);
         if (!desc) return kIOReturnNoMemory;
 
         IOReturn prep = desc->prepare();

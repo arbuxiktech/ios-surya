@@ -95,7 +95,7 @@ index 0000000..81db7c5
 +#endif /* _SURYA_NATIVE_ADRENO_H */
 diff --git a/iokit/Kernel/arm/SuryaNativeAdreno.cpp b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 new file mode 100644
-index 0000000..2e1d8b8
+index 0000000..04cedaa
 --- /dev/null
 +++ b/iokit/Kernel/arm/SuryaNativeAdreno.cpp
 @@ -0,0 +1,549 @@
@@ -594,7 +594,7 @@ index 0000000..2e1d8b8
 +
 +        IOMemoryDescriptor *desc = IOMemoryDescriptor::withAddressRange(
 +            (mach_vm_address_t)req->address, (mach_vm_size_t)req->bytes,
-+            kIODirectionInOut, fTask);
++            static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryMapperNone), fTask);
 +        if (!desc) return kIOReturnNoMemory;
 +
 +        IOReturn prep = desc->prepare();
