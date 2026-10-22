@@ -12,6 +12,7 @@ on:
     paths:
       - "tools/extract_ios16_root_images.py"
       - "tools/mkiosroot-macos.sh"
+      - "tools/hdiutil_disk.py"
       - "tools/hash_sparsebundle.py"
       - "tools/verify_ios_stock_root.py"
       - "tools/sweet-root-tweaks.py"

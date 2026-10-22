@@ -13,22 +13,6 @@ usage() {
   exit 2
 }
 
-plist_disk() {
-  python3 - "$1" <<'PY'
-import plistlib, re, sys
-with open(sys.argv[1], 'rb') as f:
-    p = plistlib.load(f)
-devices = []
-for entity in p.get('system-entities', []):
-    dev = entity.get('dev-entry', '')
-    if re.fullmatch(r'/dev/disk\d+', dev) and dev not in devices:
-        devices.append(dev)
-if len(devices) != 1:
-    raise SystemExit(f'expected one whole disk device, found {devices}')
-print(devices[0])
-PY
-}
-
 plist_mount() {
   python3 - "$1" "$2" <<'PY'
 import plistlib, sys
@@ -89,11 +73,11 @@ add_image() {
   local source_plist="$work/source.plist" root_plist="$work/root.plist"
   hdiutil attach -plist -readonly -nobrowse -owners on -mountroot "$work/source" \
     "$image" > "$source_plist"
-  source_disk=$(plist_disk "$source_plist")
+  source_disk=$(python3 "$repo/tools/hdiutil_disk.py" "$source_plist")
   source_root=$(plist_mount "$source_plist" "$kind")
   hdiutil attach -plist -owners on -nobrowse -mountpoint "$work/root" \
     "$root_image" > "$root_plist"
-  root_disk=$(plist_disk "$root_plist")
+  root_disk=$(python3 "$repo/tools/hdiutil_disk.py" "$root_plist")
 
   case "$kind" in
     OS) target="$work/root" ;;
@@ -132,7 +116,7 @@ finalize_root() {
   local plist="$work/root.plist"
   hdiutil attach -plist -owners on -nobrowse -mountpoint "$work/root" \
     "$root_image" > "$plist"
-  root_disk=$(plist_disk "$plist")
+  root_disk=$(python3 "$repo/tools/hdiutil_disk.py" "$plist")
 
   dsc="$work/root/private/preboot/Cryptexes/OS/System/Library/Caches/com.apple.dyld"
   [[ -d $dsc ]] || { echo "missing SystemOS shared cache directory: $dsc" >&2; exit 1; }
@@ -181,7 +165,7 @@ finalize_root() {
 
   local fsck_plist="$work/fsck.plist"
   hdiutil attach -plist -nomount -readonly "$root_image" > "$fsck_plist"
-  root_disk=$(plist_disk "$fsck_plist")
+  root_disk=$(python3 "$repo/tools/hdiutil_disk.py" "$fsck_plist")
   fsck_hfs -fn "$root_disk"
   hdiutil detach "$root_disk" >/dev/null
   root_disk=
