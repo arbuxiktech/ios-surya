@@ -33,9 +33,7 @@ def verify(os_root: Path, systemos_root: Path, appos_root: Path,
     expected = {}
     for label, source in sources.items():
         apps = app_bundles(source)
-        if label == 'AppOS' and not apps:
-            raise ValueError('AppOS image contains no stock .app bundles')
-        if not apps:
+        if label != 'AppOS' and not apps:
             raise ValueError(f'{label} image contains no app bundles')
         prefix = DESTINATIONS[label]
         missing = [str(prefix / relative) for relative in apps
@@ -48,7 +46,7 @@ def verify(os_root: Path, systemos_root: Path, appos_root: Path,
         raise ValueError('OS image is missing System/Library/xpc/launchd.plist')
     if not (destination / DESTINATIONS['SystemOS'] / 'System/Library').is_dir():
         raise ValueError('SystemOS cryptex was not copied into the root image')
-    if not (destination / DESTINATIONS['AppOS'] / 'Applications').is_dir():
+    if not (destination / DESTINATIONS['AppOS'] / 'System/Library/Assistant').is_dir():
         raise ValueError('AppOS cryptex was not copied into the root image')
     return {
         'product_version': '16.7.16',
@@ -76,7 +74,7 @@ def add_image(kind: str, image_root: Path, destination: Path,
     if kind in apps_by_image:
         raise ValueError(f'{kind} was already added to this root image')
     apps = app_bundles(image_root)
-    if not apps:
+    if kind != 'AppOS' and not apps:
         raise ValueError(f'{kind} image contains no stock .app bundles')
     prefix = DESTINATIONS[kind]
     missing = [str(prefix / relative) for relative in apps
@@ -87,7 +85,7 @@ def add_image(kind: str, image_root: Path, destination: Path,
         raise ValueError('OS image is missing System/Library/xpc/launchd.plist')
     if kind == 'SystemOS' and not (destination / prefix / 'System/Library').is_dir():
         raise ValueError('SystemOS cryptex was not copied into the root image')
-    if kind == 'AppOS' and not (destination / prefix / 'Applications').is_dir():
+    if kind == 'AppOS' and not (destination / prefix / 'System/Library/Assistant').is_dir():
         raise ValueError('AppOS cryptex was not copied into the root image')
     apps_by_image[kind] = {'count': len(apps), 'paths': apps}
     inventory['total_app_bundles'] = sum(item['count'] for item in apps_by_image.values())
@@ -114,7 +112,7 @@ def finalize(destination: Path, inventory_path: Path) -> dict:
         raise ValueError('root image is missing launchd.plist')
     if not (destination / DESTINATIONS['SystemOS'] / 'System/Library').is_dir():
         raise ValueError('SystemOS cryptex is missing from final image')
-    if not (destination / DESTINATIONS['AppOS'] / 'Applications').is_dir():
+    if not (destination / DESTINATIONS['AppOS'] / 'System/Library/Assistant').is_dir():
         raise ValueError('AppOS cryptex is missing from final image')
     inventory['total_app_bundles'] = sum(
         item['count'] for item in inventory['apps_by_image'].values())

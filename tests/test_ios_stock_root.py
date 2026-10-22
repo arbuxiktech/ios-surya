@@ -9,6 +9,24 @@ import verify_ios_stock_root
 
 
 class StockRootTests(unittest.TestCase):
+    def test_appos_cryptex_without_app_bundles_is_still_inventoried(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / 'source'
+            destination = base / 'root'
+            inventory = base / 'inventory.json'
+            (source / 'System/Library/Assistant/Plugins').mkdir(parents=True)
+            (source / 'System/Library/Assistant/Plugins/fixture').write_bytes(b'fixture')
+            target = destination / verify_ios_stock_root.DESTINATIONS['AppOS']
+            (target / 'System/Library/Assistant/Plugins').mkdir(parents=True)
+            (target / 'System/Library/Assistant/Plugins/fixture').write_bytes(b'fixture')
+
+            result = verify_ios_stock_root.add_image(
+                'AppOS', source, destination, inventory)
+
+            self.assertEqual(result['app_bundles'], 0)
+            self.assertEqual(result['total_app_bundles'], 0)
+
     def test_all_source_app_bundles_must_be_present_in_correct_cryptex(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
@@ -18,6 +36,7 @@ class StockRootTests(unittest.TestCase):
                 app = root / 'Applications' / f'{name}.app'
                 app.mkdir(parents=True)
                 (app / 'Info.plist').write_bytes(b'fixture')
+            (roots['AppOS'] / 'System/Library/Assistant').mkdir(parents=True)
             (roots['OS'] / 'System/Library/xpc').mkdir(parents=True)
             (roots['OS'] / 'System/Library/xpc/launchd.plist').write_bytes(b'fixture')
             (roots['SystemOS'] / 'System/Library').mkdir(parents=True)
@@ -28,6 +47,8 @@ class StockRootTests(unittest.TestCase):
             (destination / 'System/Library/xpc').mkdir(parents=True)
             (destination / 'System/Library/xpc/launchd.plist').write_bytes(b'fixture')
             (destination / 'private/preboot/Cryptexes/OS/System/Library').mkdir(parents=True)
+            (destination / 'private/preboot/Cryptexes/App/System/Library/Assistant').mkdir(
+                parents=True)
             result = verify_ios_stock_root.verify(
                 roots['OS'], roots['SystemOS'], roots['AppOS'], destination)
             self.assertEqual(result['total_app_bundles'], 3)
@@ -49,11 +70,12 @@ class StockRootTests(unittest.TestCase):
                 target = destination / verify_ios_stock_root.DESTINATIONS[name] / 'Applications' / f'{name}.app'
                 target.mkdir(parents=True)
                 (target / 'Info.plist').write_bytes(b'fixture')
+            (sources['AppOS'] / 'System/Library/Assistant').mkdir(parents=True)
             launchd = destination / 'System/Library/xpc/launchd.plist'
             launchd.parent.mkdir(parents=True)
             launchd.write_bytes(b'fixture')
             (destination / 'private/preboot/Cryptexes/OS/System/Library').mkdir(parents=True)
-            (destination / 'private/preboot/Cryptexes/App/Applications').mkdir(
+            (destination / 'private/preboot/Cryptexes/App/System/Library/Assistant').mkdir(
                 parents=True, exist_ok=True)
 
             verify_ios_stock_root.add_image('AppOS', sources['AppOS'], destination, inventory)

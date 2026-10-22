@@ -21,17 +21,22 @@ with open(sys.argv[1], 'rb') as f:
     p = plistlib.load(f)
 kind = sys.argv[2]
 candidates = []
+mounted = []
 for entity in p.get('system-entities', []):
     mount = entity.get('mount-point')
     if not mount:
         continue
     root = Path(mount)
+    mounted.append(root)
     if kind == 'OS' and (root / 'System/Library/xpc/launchd.plist').is_file():
         candidates.append(root)
-    elif kind != 'OS' and (root / 'System/Library').is_dir() and (root / 'usr/lib').is_dir():
+    elif kind == 'SystemOS' and (root / 'System/Library').is_dir() and (root / 'usr/lib').is_dir():
+        candidates.append(root)
+    elif kind == 'AppOS' and (root / 'System/Library/Assistant').is_dir():
         candidates.append(root)
 if len(candidates) != 1:
-    raise SystemExit(f'expected one {kind} root volume, found {[str(x) for x in candidates]}')
+    raise SystemExit(f'expected one {kind} root volume, found {[str(x) for x in candidates]}; '
+                     f'mounted volumes: {[str(x) for x in mounted]}')
 print(candidates[0])
 PY
 }
@@ -87,6 +92,14 @@ add_image() {
   echo "copying $source_root -> ${target#"$work/root"}"
   sudo mkdir -p "$target"
   sudo "$rsync" -aHAX --numeric-ids "$source_root/" "$target/"
+  echo "checking copied $kind files and metadata"
+  sudo "$rsync" -aHAXnc --numeric-ids --delete --itemize-changes \
+    "$source_root/" "$target/" > "$work/rsync-verify.txt"
+  if [[ -s $work/rsync-verify.txt ]]; then
+    cat "$work/rsync-verify.txt" >&2
+    echo "$kind copy differs from its IPSW source" >&2
+    exit 1
+  fi
   sudo python3 "$repo/tools/verify_ios_stock_root.py" --kind "$kind" \
     --image "$source_root" --root "$work/root" --inventory "$inventory"
 
