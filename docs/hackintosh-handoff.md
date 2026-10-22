@@ -58,13 +58,22 @@ verified on this phone. Do not enable the A642L driver on Surya.
 ## Files for the Mac
 
 The complete source repository and the external `surya-drivers` asset folder
-are staged together in `Surya-Hackintosh-Handoff-2026-10-22` on the Windows
-NTFS volume. The external folder contains local firmware, device trees,
-graphics source, patch copies, boot/payload artifacts, IPSW and extracted IPSW
-images; it is not part of the GitHub repository.
+are staged together at
+`C:\Users\Arbuxik\Documents\ChatGPT\Surya-Hackintosh-Handoff-2026-10-22`
+on the Windows NTFS volume. Its `START-HERE.md` repeats this summary. The
+external folder contains local firmware, device trees, graphics source, patch
+copies, boot/payload artifacts, IPSW and extracted IPSW images; it is not part
+of the GitHub repository.
 
 When booted into macOS, copy that handoff folder from the mounted Windows NTFS
-volume to an APFS home folder. The 1 TB PNY second disk is GPT with a 200 MB EFI
+volume to an APFS home folder. Use `ls /Volumes` to find the mounted Windows
+volume, then copy the package, for example:
+
+```sh
+ditto "/Volumes/<Windows volume>/Users/Arbuxik/Documents/ChatGPT/Surya-Hackintosh-Handoff-2026-10-22" "$HOME/Surya-Hackintosh-Handoff-2026-10-22"
+```
+
+The 1 TB PNY second disk is GPT with a 200 MB EFI
 partition and a hidden APFS partition; Windows cannot mount the APFS volume, so
 no files were written to the Hackintosh disk from this Windows session. The
 GitHub branch remains the authoritative source:
