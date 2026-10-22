@@ -16,24 +16,25 @@ import mkadt
 CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam '
            '-noprogress rd=md0 sweettouch=0 sweetkeys=0 sweetusb=0 '
            'sweetbattery=0 sweetlog=0 ufsrw=0 rootrw=0')
-APPLE_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam '
+APPLE_CMDLINE = ('debug=0xc serial=3 cpus=8 keepsyms=1 -enable_kprintf_spam '
                  '-noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 '
                  'ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 '
                  'launchd_unsecure_cache=1 wdt=-1 sweettouch=0 sweetkeys=0 '
                  'sweetusb=0 sweetbattery=0 sweetlog=0')
 APPLE_DIAGNOSTIC_CMDLINE = (APPLE_CMDLINE +
     ' sweetnull=launchd,xpcproxy,bluetoothd,fairplayd.H2,triald,backboardd,SpringBoard')
-APPLE_GUI_CMDLINE = ('debug=0xc serial=3 cpus=1 keepsyms=1 -noprogress '
+APPLE_GUI_CMDLINE = ('debug=0xc serial=3 cpus=8 keepsyms=1 -noprogress '
                      'rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 '
                      'ignition_level=1 wdt_test=no_user_checkin ufsrw=1 rootrw=1 '
                      'launchd_unsecure_cache=1 wdt=-1 sweetfb_noconsole=1 sweetfb_hz=30 '
                      'sweettouch=1 sweetkeys=0 sweetusb=0 sweetbattery=0 sweetlog=0')
+APPLE_SMP_CMDLINE = APPLE_GUI_CMDLINE
 # Visible touch bring-up without daemon stderr flooding or console muting.
 APPLE_TOUCH_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                        ' suryatouchreport=1')
 APPLE_GPU_PT_CMDLINE = (APPLE_GUI_CMDLINE.replace('sweetfb_noconsole=1', 'sweetfb_noconsole=0') +
                         ' suryagpummu=1')
-APPLE_METAL_CMDLINE = (APPLE_GUI_CMDLINE.replace('cpus=1', 'cpus=8').replace('sweetfb_hz=30', 'sweetfb_hz=120') +
+APPLE_METAL_CMDLINE = (APPLE_SMP_CMDLINE.replace('sweetfb_hz=30', 'sweetfb_hz=120') +
                        ' -no_slto_panic sheng-gpu-addon=1')
 UPSTREAM = '11da58bd050672960c0a83b5bef2176047eea479'
 
@@ -46,6 +47,48 @@ def setprop(node, key, value):
 def child(node, name):
     return next(n for n in node.children
                 if dict((k, v) for k, f, v in n.props)['name'] == name.encode() + b'\0')
+
+
+def _walk(node):
+    yield node
+    for descendant in node.children:
+        yield from _walk(descendant)
+
+
+def set_cpu_count(root, count):
+    """Set a verified one- or eight-core SM7150 topology in an Apple ADT.
+
+    Preserve the donor's cpu0 node and /cpus phandle (including any references
+    elsewhere in the Apple tree), and add the seven SM7150 secondary nodes from
+    the project's device-tree generator with collision-free phandles.
+    """
+    if count not in (1, 8):
+        raise ValueError('SURYA supports explicit cpu counts 1 or 8')
+    cpus = child(root, 'cpus')
+    boot_cpu = next((cpu for cpu in cpus.children
+                     if dict((k, v) for k, f, v in cpu.props).get('name') == b'cpu0\0'), None)
+    if boot_cpu is None:
+        raise ValueError('Apple ADT has no cpu0 boot node')
+    if count == 1:
+        cpus.children = [boot_cpu]
+        return
+
+    generated = child(mkadt.build(seed=b'\0' * 64, product_path=None), 'cpus')
+    if len(generated.children) != 8:
+        raise ValueError('SM7150 generator did not produce eight CPU nodes')
+    phandles = [int.from_bytes(value, 'little')
+                for node in _walk(root)
+                for key, _, value in node.props
+                if key in ('AAPL,phandle', 'phandle') and len(value) == 4]
+    next_phandle = max(phandles, default=0) + 1
+    if next_phandle + 6 > 0xffffffff:
+        raise ValueError('no free 32-bit ADT phandles for secondary CPUs')
+    secondaries = []
+    for cpu in generated.children[1:]:
+        setprop(cpu, 'AAPL,phandle', mkadt.u32(next_phandle))
+        next_phandle += 1
+        secondaries.append(cpu)
+    cpus.children = [boot_cpu] + secondaries
 
 
 def validate_memory(base, size):
@@ -153,9 +196,17 @@ def validate_payload(blob):
     # Validate the same contract used by ADT generation, including address limits.
     validate_memory(base, size)
     cmd = blob[0x48:mkpayload.SEG_TABLE].split(b'\0', 1)[0].decode('ascii')
-    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE, APPLE_METAL_CMDLINE) if apple_root else (CMDLINE,)
+    allowed_cmdlines = (APPLE_CMDLINE, APPLE_DIAGNOSTIC_CMDLINE, APPLE_GUI_CMDLINE,
+                        APPLE_SMP_CMDLINE, APPLE_TOUCH_CMDLINE, APPLE_GPU_PT_CMDLINE,
+                        APPLE_METAL_CMDLINE) if apple_root else (CMDLINE,)
     if cmd not in allowed_cmdlines:
         raise ValueError('command line does not match the SURYA boot profile')
+    if apple_root and 'cpus=8' in cmd.split():
+        cpu_nodes = child(root, 'cpus').children
+        ids = [dict((k, v) for k, f, v in cpu.props).get('cpu-id') for cpu in cpu_nodes]
+        regs = [dict((k, v) for k, f, v in cpu.props).get('reg') for cpu in cpu_nodes]
+        if ids != [mkadt.u32(i) for i in range(8)] or regs != [mkadt.u32(i << 8) for i in range(8)]:
+            raise ValueError('cpus=8 requires the complete SM7150 cpu0-cpu7 MPIDR topology')
     touch_chosen = child(root, 'chosen')
     firmware = touch_chosen.prop('surya-touch-firmware')
     if firmware is not None:

@@ -1,0 +1,142 @@
+name: iOS 16 stock root
+
+on:
+  workflow_dispatch:
+    inputs:
+      root_size:
+        description: Maximum HFS+ sparsebundle capacity
+        required: true
+        default: 24g
+  push:
+    branches: [codex/surya-port]
+    paths:
+      - "tools/extract_ios16_root_images.py"
+      - "tools/mkiosroot-macos.sh"
+      - "tools/hash_sparsebundle.py"
+      - "tools/verify_ios_stock_root.py"
+      - "tools/sweet-root-tweaks.py"
+      - ".github/workflows/ios16-stock-root.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios16-stock-root-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  extract:
+    runs-on: macos-14
+    timeout-minutes: 180
+    env:
+      IPSW_URL: https://updates.cdn-apple.com/2025FallFCS/fullrestores/122-77006/1158E502-D76D-4226-AA06-ED5E30CD1111/iPhone10,3,iPhone10,6_16.7.16_20H392_Restore.ipsw
+      IPSW_SHA256: ece1194f7e233e9109c5790a8d23a4564a10a254e15ec5b09978a343265568fb
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and verify Apple restore package
+        run: |
+          df -h /
+          curl --fail --location --retry 5 --retry-all-errors "$IPSW_URL" -o iPhone10,3_iOS16.7.16_20H392_Restore.ipsw
+          echo "$IPSW_SHA256  iPhone10,3_iOS16.7.16_20H392_Restore.ipsw" | shasum -a 256 --check
+          python3 tools/extract_ios16_root_images.py iPhone10,3_iOS16.7.16_20H392_Restore.ipsw out --inspect-only
+
+      - name: Extract and publish AppOS cryptex
+        run: |
+          python3 tools/extract_ios16_root_images.py iPhone10,3_iOS16.7.16_20H392_Restore.ipsw out --only AppOS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios16-input-appos-20H392
+          path: out/AppOS.dmg
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Release AppOS extraction space
+        run: rm -f out/AppOS.dmg
+
+      - name: Extract and publish SystemOS cryptex
+        run: |
+          python3 tools/extract_ios16_root_images.py iPhone10,3_iOS16.7.16_20H392_Restore.ipsw out --only SystemOS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios16-input-systemos-20H392
+          path: out/SystemOS.dmg
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Release SystemOS extraction space
+        run: rm -f out/SystemOS.dmg
+
+      - name: Extract and publish OS volume
+        run: |
+          python3 tools/extract_ios16_root_images.py iPhone10,3_iOS16.7.16_20H392_Restore.ipsw out --only OS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios16-input-os-20H392
+          path: out/OS.dmg
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Release IPSW and extraction files
+        run: rm -rf out iPhone10,3_iOS16.7.16_20H392_Restore.ipsw
+
+  build:
+    needs: extract
+    runs-on: macos-14
+    timeout-minutes: 240
+    env:
+      ROOT_SIZE: ${{ inputs.root_size || '24g' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install filesystem copy utility
+        run: brew install rsync
+
+      - name: Initialize the sparse root volume
+        run: |
+          mkdir -p out
+          bash tools/mkiosroot-macos.sh init out/ios16-root-20H392.sparsebundle "$ROOT_SIZE"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios16-input-appos-20H392
+          path: out/input-appos
+
+      - name: Add AppOS applications and framework files
+        run: |
+          bash tools/mkiosroot-macos.sh add AppOS out/input-appos/AppOS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
+          rm -rf out/input-appos
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios16-input-systemos-20H392
+          path: out/input-systemos
+
+      - name: Add SystemOS applications and framework files
+        run: |
+          bash tools/mkiosroot-macos.sh add SystemOS out/input-systemos/SystemOS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
+          rm -rf out/input-systemos
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ios16-input-os-20H392
+          path: out/input-os
+
+      - name: Add OS applications and framework files
+        run: |
+          bash tools/mkiosroot-macos.sh add OS out/input-os/OS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
+          rm -rf out/input-os
+
+      - name: Finalize and verify the stock app root
+        run: bash tools/mkiosroot-macos.sh finalize out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios16-surya-stock-root-20H392
+          path: out
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7

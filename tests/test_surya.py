@@ -15,9 +15,11 @@ def props(n):
     return dict((k, v) for k, f, v in n.props)
 
 
-def payload(apple=False):
+def payload(apple=False, cmdline=None, cpu_count=None):
     base, virt = 0x100000000, 0xfffffe0007000000
     tree = surya.build(base, 0xfc000000 if apple else 0x20000000, seed=b'0' * 64)
+    if cpu_count is not None:
+        surya.set_cpu_count(tree, cpu_count)
     if apple:
         surya.setprop(surya.child(tree, 'chosen'), 'surya-apple-root', mkadt.u32(1))
         surya.setprop(surya.child(tree, 'chosen'), 'surya-ufs-probe', mkadt.u32(1))
@@ -32,7 +34,7 @@ def payload(apple=False):
     struct.pack_into('<8sII7Q', b, 0, b'SWEETXNU', 1, 2, virt,
                      virt + 0x100, dt_off, len(tree_blob), virt + 0x8000,
                      base, 0xfc000000 if apple else 0x20000000)
-    cmd = (surya.APPLE_CMDLINE if apple else surya.CMDLINE).encode()
+    cmd = (cmdline or (surya.APPLE_CMDLINE if apple else surya.CMDLINE)).encode()
     b[0x48:0x48 + len(cmd)] = cmd
     struct.pack_into('<4Q', b, mkpayload.SEG_TABLE, virt, 0x4000, off, 0x4000)
     struct.pack_into('<4Q', b, mkpayload.SEG_TABLE + 32, virt + 0x4000, 0x4000, off + 0x4000, 0x4000)
@@ -49,6 +51,36 @@ class SuryaTests(unittest.TestCase):
         self.assertEqual(len(surya.child(tree, 'cpus').children), 8)
         self.assertNotIn(b'sweet-ufs\0', [props(n)['name'] for n in tree.children])
         self.assertEqual(mkpayload.adt_dram(adt.serialize(tree)), (0x100000000, 0x20000000))
+
+    def test_apple_smp_profile_requires_eight_sm7150_cores(self):
+        good = payload(apple=True, cmdline=surya.APPLE_SMP_CMDLINE, cpu_count=8)
+        self.assertEqual(surya.validate_payload(good)['stage'], 'apple-root')
+        bad = payload(apple=True, cmdline=surya.APPLE_SMP_CMDLINE, cpu_count=1)
+        with self.assertRaisesRegex(ValueError, 'complete SM7150'):
+            surya.validate_payload(bad)
+
+    def test_all_default_apple_profiles_select_all_eight_cores(self):
+        profiles = (surya.APPLE_CMDLINE, surya.APPLE_DIAGNOSTIC_CMDLINE,
+                    surya.APPLE_GUI_CMDLINE, surya.APPLE_TOUCH_CMDLINE,
+                    surya.APPLE_GPU_PT_CMDLINE, surya.APPLE_METAL_CMDLINE)
+        for command_line in profiles:
+            with self.subTest(command_line=command_line):
+                self.assertIn('cpus=8', command_line.split())
+                self.assertEqual(surya.validate_payload(payload(
+                    apple=True, cmdline=command_line))['stage'], 'apple-root')
+
+    def test_cpu_topology_rebuild_preserves_boot_node_and_unique_phandles(self):
+        tree = surya.build(0x100000000, 0xfc000000, seed=b'0' * 64)
+        cpus = surya.child(tree, 'cpus')
+        boot_cpu = cpus.children[0]
+        surya.set_cpu_count(tree, 1)
+        self.assertIs(cpus.children[0], boot_cpu)
+        surya.set_cpu_count(tree, 8)
+        self.assertIs(cpus.children[0], boot_cpu)
+        self.assertEqual(len(cpus.children), 8)
+        all_phandles = [v for node in surya._walk(tree) for k, f, v in node.props
+                        if k in ('AAPL,phandle', 'phandle') and len(v) == 4]
+        self.assertEqual(len(all_phandles), len(set(all_phandles)))
 
     def test_qemu_uses_virtual_interrupt_map(self):
         tree = surya.build(0xb0000000, 0x20000000, qemu=True, seed=b'0' * 64)

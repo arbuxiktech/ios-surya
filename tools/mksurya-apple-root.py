@@ -14,6 +14,7 @@ p.add_argument('out', type=Path)
 p.add_argument('--diagnostic', action='store_true', help='tee selected daemon stderr from /dev/null to console')
 p.add_argument('--gui', action='store_true', help='clean GUI boot: mute console on first frame present and set sweetfb_hz=30')
 p.add_argument('--touch-diagnostic', action='store_true', help='enable touch with visible console diagnostics')
+p.add_argument('--cpus', choices=('1', '8'), help='select one or all eight SM7150 CPU cores (default: 8)')
 
 p.add_argument('--touch-firmware', type=Path, help='pinned Poco Tianma controller RAM firmware')
 p.add_argument('--gmu-firmware', type=Path, help='pinned Adreno 618 GMU firmware')
@@ -26,22 +27,33 @@ p.add_argument('--metal-bundle', type=Path, help='path to surya-metal-bundle.tar
 a = p.parse_args()
 if sum((a.diagnostic, a.gui, a.touch_diagnostic, a.gpu_table_diagnostic, a.metal)) > 1:
     raise SystemExit('select only one boot profile')
+if a.metal and a.cpus == '1':
+    raise SystemExit('--metal requires --cpus 8')
 kernel = a.kernel.read_bytes()
 if b'SURYA: bounded Apple root writes armed' not in kernel:
     raise SystemExit('kernel lacks bounded SURYA Apple-root support')
 m = mkpayload.parse_macho(kernel)
 if m['cputype'] != 0x100000c or m['cpusub'] != 0:
     raise SystemExit('SURYA requires plain arm64')
-cmdline = surya.APPLE_METAL_CMDLINE if a.metal else (surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else surya.APPLE_GUI_CMDLINE if a.gui else (surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else surya.APPLE_CMDLINE))
+cpu_count = int(a.cpus or '8')
+base_cmdline = (surya.APPLE_METAL_CMDLINE if a.metal else
+                surya.APPLE_GPU_PT_CMDLINE if a.gpu_table_diagnostic else
+                surya.APPLE_TOUCH_CMDLINE if a.touch_diagnostic else
+                surya.APPLE_GUI_CMDLINE if a.gui else
+                surya.APPLE_DIAGNOSTIC_CMDLINE if a.diagnostic else
+                surya.APPLE_CMDLINE)
+cmdline = base_cmdline.replace('cpus=1', f'cpus={cpu_count}')
 if a.gpu_table_diagnostic and b'SURYA GPU PAGE TABLE DIAGNOSTIC' not in kernel:
     raise SystemExit('kernel lacks SURYA GPU table diagnostic')
 adt_path = a.adt
 ROOT = Path(__file__).resolve().parents[1]
-if a.touch_firmware or a.gmu_firmware or a.sqe_firmware or a.gpu_table_diagnostic or a.metal_bundle:
+if (a.cpus is not None or a.metal or a.touch_firmware or a.gmu_firmware or
+        a.sqe_firmware or a.gpu_table_diagnostic or a.metal_bundle):
     tree, end = adt.parse(a.adt.read_bytes())
     if end != a.adt.stat().st_size:
         raise SystemExit('unexpected trailing ADT bytes')
     chosen = surya.child(tree, 'chosen')
+    surya.set_cpu_count(tree, cpu_count)
     if a.touch_firmware:
         if not (a.gui or a.touch_diagnostic or a.gpu_table_diagnostic or a.metal):
             raise SystemExit('touch firmware requires a touch-enabled boot profile')

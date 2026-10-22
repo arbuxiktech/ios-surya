@@ -17,6 +17,24 @@ new phone image.
 
 ## Current SURYA state
 
+### Active handoff: eight-core GUI, IPSW stock apps, and graphics audit (2026-10-22)
+
+- The owner reports the latest Apple-root boot with `cpus=8` reached the Lock Screen/home screen. The payload includes all eight SM7150 CPU nodes and MPIDR values 0x0 through 0x700. This confirms the eight-core configuration boots into the GUI; no live per-core online counter was captured. Apple-root profiles now default to `cpus=8`, with `--cpus 1` retained as an explicit fallback.
+- Current working-tree validation: 69 tests pass (26 skipped because this Windows host lacks the C/ARM compiler tooling), all 97 patch files validate, all 39 Python tools compile, all 12 shell scripts pass syntax checks, and `git diff --check` is clean.
+- Local IPSW: `C:/Users/Arbuxik/Documents/ChatGPT/surya-drivers/ipsw/iPhone10,3_iOS16.7.16_20H392_Restore.ipsw`, SHA256 `ece1194f7e233e9109c5790a8d23a4564a10a254e15ec5b09978a343265568fb`. `tools/extract_ios16_root_images.py --inspect-only` selected the case-insensitive `d22ap` erase identity and validated OS, SystemOS and AppOS manifest paths and SHA-384 digests. The images are present under `surya-drivers/ipsw/extracted-20H392/`.
+- The Windows/WSL host cannot mount HFS+, so no complete stock-app root image exists yet. Added a staged macOS Actions workflow: it extracts one manifest-verified IPSW component at a time, adds each to an HFS+ sparsebundle, applies the existing SWEET first-boot adjustments, and checks every `.app` bundle from the OS, SystemOS and AppOS images. Staging keeps peak disk use within the standard macOS runner's 14 GB SSD. The workflow has not run yet; do not describe the stock apps as restored until its artifact and inventory pass validation. Its first artifact is the root sparsebundle, not a fastboot-ready image; conversion/install remains a later reviewed step.
+- No new image was flashed to userdata in this milestone. Any install of the eventual root candidate remains a separate destructive step and needs fresh explicit approval after the artifact is reviewed.
+- Graphics source audit: HackiOS has Mesa GLES/Freedreno for CoreAnimation and a separate AIR-to-NIR Metal path through the same `RedwoodGPU` service. Its kernel backend is specific to the Poco X5 Pro's Adreno 642L (`0x06030500`); the Poco X3 NFC is Adreno 618 (`0x06010800`) with different power, firmware, clocks and SMMU. `gpu=1` is not a valid enablement on this phone yet. The working iOS GUI remains the CPU renderer; no Mesa/CoreAnimation GPU rendering or Metal execution has been established on SURYA. Details and the port boundary are in `docs/hackios-mesa-surya-assessment.md`.
+- Next: push the checked source changes to `arbuxiktech/ios-surya`, run the new macOS workflow, inspect its app inventory and image checksums, then review the separate A618-to-HackiOS Mesa kernel port.
+
+> **Verification correction for the historical GPU notes below:** they contain
+> earlier claims of native GPU/Metal completion that are not supported by the
+> current source audit. Treat those entries as unverified history. The present
+> evidence and safe next steps are in `docs/graphics-bringup.md`,
+> `docs/hackios-mesa-surya-assessment.md` and the active
+> handoff above; no GPU rendering claim should be made without a repeatable
+> command/fence/render test on the actual A618.
+
 ## Adreno 618 Hardware Verification: Milestone 8 PASSED (2026-10-21)
 
 Physical hardware verification confirmed on real Poco X3 NFC in boot photo `e720b432`:
