@@ -29,14 +29,16 @@
  	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
  		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx", __func__,
  		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
-+#endif
  	}
++#endif
  	return pa - gPhysBase + gVirtBase;
  }
 @@ -395,15 +411,30 @@
  				*max_len = len;
  			}
- 			return pa - ptov_table[i].pa + ptov_table[i].va;
+			return pa - ptov_table[i].pa + ptov_table[i].va;
+ 		}
+ 	}
 +#if defined(SWEET)
 +	if (pa >= 0x9c000000ULL && pa < (0x9c000000ULL + ARM_TT_L2_SIZE)) {
 +		len = (0x9c000000ULL + ARM_TT_L2_SIZE) - pa;
@@ -46,8 +48,6 @@
 +		return (vm_map_address_t)(pa - 0x9c000000ULL + SWEET_EARLY_FB_VA);
 +	}
 +#endif
- 		}
- 	}
  	len = PAGE_SIZE - (pa & PAGE_MASK);
  	if (*max_len > len) {
  		*max_len = len;
@@ -60,8 +60,8 @@
  	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
  		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx", __func__,
  		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
-+#endif
  	}
++#endif
  	return pa - gPhysBase + gVirtBase;
  }
 @@ -416,6 +447,11 @@

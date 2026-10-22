@@ -1,11 +1,16 @@
-# Active project: Poco X3 NFC (surya), 2026-10-19
+# Active project: Poco X3 NFC (surya), 2026-10-22
 
-The current owner suspended and preserved the previous independent project at
-`C:/Users/Arbuxik/Documents/ChatGPT/fdsfsdfdsfsdfffff`, then requested adapting
-https://github.com/dipa-studio/ios-sweet specifically for Poco X3 NFC. Latest
-steering: "remember just do that it works with poco x3 nfc". Work here, in
-`C:/Users/Arbuxik/Documents/ChatGPT/ios-surya-from-sweet`, branch `codex/surya-port`.
-Upstream baseline: `11da58bd050672960c0a83b5bef2176047eea479`.
+The owner switched from UniXNU back to the ios-sweet-derived fork
+https://github.com/arbuxiktech/ios-surya and requested iOS 16 / Darwin 22 for
+Poco X3 NFC (`surya`). Work in
+`C:/Users/Arbuxik/Documents/ChatGPT/ios-surya`, branch `codex/surya-port`.
+The current checkout is `071b91a`; its latest Actions build (`39742458362`)
+failed compiling the framebuffer `phystokv` patch because its `#if` blocks
+closed after the wrong braces. That patch is corrected in the current working
+tree, along with Windows validation fixes. Local validation passes: 62 tests
+(26 skipped because this host lacks the required C/ARM toolchains), 97 patch
+files, 34 Python tools and 11 shell scripts. The corrected kernel build has
+not yet run. No device action was performed in this milestone.
 
 ## Current SURYA state
 

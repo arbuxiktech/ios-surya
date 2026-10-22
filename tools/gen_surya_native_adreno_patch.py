@@ -7,8 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def new_file(name, data):
+    data = data.replace(b'\r\n', b'\n')
     if b'\r' in data or not data.endswith(b'\n'):
-        raise ValueError('kernel source must use LF with final newline')
+        raise ValueError('kernel source must use LF or CRLF with final newline')
     digest = hashlib.sha1(f'blob {len(data)}\0'.encode() + data).hexdigest()
     return (f'diff --git a/iokit/Kernel/arm/{name} b/iokit/Kernel/arm/{name}\n'
             f'new file mode 100644\nindex 0000000..{digest[:7]}\n'

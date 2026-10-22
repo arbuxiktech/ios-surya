@@ -109,7 +109,10 @@ def validate_shell_scripts(verbose=False):
 
     for path in sh_files:
         rel = os.path.relpath(path, REPO_ROOT)
-        res = subprocess.run(['bash', '-n', path], capture_output=True, text=True)
+        # Git Bash on Windows cannot consume a native C:\ path. Run from the
+        # repository root with a POSIX-style relative path instead.
+        rel_posix = rel.replace(os.sep, '/')
+        res = subprocess.run(['bash', '-n', rel_posix], cwd=REPO_ROOT, capture_output=True, text=True)
         if res.returncode != 0:
             errors.append(f"{rel}: {res.stderr.strip()}")
         elif verbose:
