@@ -1,0 +1,86 @@
+--- a/osfmk/arm/caches.c
++++ b/osfmk/arm/caches.c
+@@ -69,10 +69,24 @@
+ 	vm_size_t       count;
+ 
+ 	while (length > 0) {
++		boolean_t is_mapped = TRUE;
++		unsigned int index = 0;
+ 		if (phys) {
+-			count = length;
+ 			paddr = CAST_DOWN(pmap_paddr_t, addr);
+-			vaddr = phystokv_range(paddr, &count);
++			if (isphysmem(paddr)) {
++				count = length;
++				vaddr = phystokv_range(paddr, &count);
++			} else {
++				count = PAGE_SIZE - (paddr & PAGE_MASK);
++				if (count > length) {
++					count = length;
++				}
++				unsigned int wimg_bits = pmap_cache_attributes((ppnum_t) (paddr >> PAGE_SHIFT));
++				mp_disable_preemption();
++				index = pmap_map_cpu_windows_copy((ppnum_t) (paddr >> PAGE_SHIFT), VM_PROT_READ | VM_PROT_WRITE, wimg_bits);
++				vaddr = pmap_cpu_windows_copy_addr(cpu_number(), index) | (paddr & PAGE_MASK);
++				is_mapped = FALSE;
++			}
+ 		} else {
+ 			paddr = kvtophys(addr);
+ 			vaddr = addr;
+@@ -85,10 +99,13 @@
+ 		if (paddr && (cpu_data_ptr->cpu_cache_dispatch != NULL)) {
+ 			cpu_data_ptr->cpu_cache_dispatch(cpu_data_ptr->cpu_id, CacheCleanFlushRegion, (unsigned int) paddr, (unsigned)count);
+ 		}
++		if (!is_mapped) {
++			pmap_unmap_cpu_windows_copy(index);
++			mp_enable_preemption();
++		}
+ 		addr += count;
+ 		length -= count;
+ 	}
+-	return;
+ }
+ 
+ void
+@@ -103,10 +120,24 @@
+ 	vm_size_t       count;
+ 
+ 	while (length > 0) {
++		boolean_t is_mapped = TRUE;
++		unsigned int index = 0;
+ 		if (phys) {
+-			count = length;
+ 			paddr = CAST_DOWN(pmap_paddr_t, addr);
+-			vaddr = phystokv_range(paddr, &count);
++			if (isphysmem(paddr)) {
++				count = length;
++				vaddr = phystokv_range(paddr, &count);
++			} else {
++				count = PAGE_SIZE - (paddr & PAGE_MASK);
++				if (count > length) {
++					count = length;
++				}
++				unsigned int wimg_bits = pmap_cache_attributes((ppnum_t) (paddr >> PAGE_SHIFT));
++				mp_disable_preemption();
++				index = pmap_map_cpu_windows_copy((ppnum_t) (paddr >> PAGE_SHIFT), VM_PROT_READ | VM_PROT_WRITE, wimg_bits);
++				vaddr = pmap_cpu_windows_copy_addr(cpu_number(), index) | (paddr & PAGE_MASK);
++				is_mapped = FALSE;
++			}
+ 		} else {
+ 			paddr = kvtophys(addr);
+ 			vaddr = addr;
+@@ -119,10 +150,13 @@
+ 		if (paddr && (cpu_data_ptr->cpu_cache_dispatch != NULL)) {
+ 			cpu_data_ptr->cpu_cache_dispatch(cpu_data_ptr->cpu_id, CacheCleanRegion, (unsigned int) paddr, (unsigned)count);
+ 		}
++		if (!is_mapped) {
++			pmap_unmap_cpu_windows_copy(index);
++			mp_enable_preemption();
++		}
+ 		addr += count;
+ 		length -= count;
+ 	}
+-	return;
+ }
+ 
+ void

@@ -1,6 +1,6 @@
 --- a/osfmk/arm64/arm_vm_init.c
 +++ b/osfmk/arm64/arm_vm_init.c
-@@ -366,6 +366,12 @@
+@@ -366,6 +366,13 @@
  SECURITY_READ_ONLY_LATE(static ptov_table_entry)        ptov_table[PTOV_TABLE_SIZE];
  SECURITY_READ_ONLY_LATE(static boolean_t)               kva_active = FALSE;
  
@@ -10,10 +10,11 @@
 +#endif
 +#endif
 +
++
  
  vm_map_address_t
  phystokv(pmap_paddr_t pa)
-@@ -376,6 +382,11 @@
+@@ -376,9 +383,18 @@
  			return pa - ptov_table[i].pa + ptov_table[i].va;
  		}
  	}
@@ -21,14 +22,21 @@
 +	if (pa >= 0x9c000000ULL && pa < (0x9c000000ULL + ARM_TT_L2_SIZE)) {
 +		return (vm_map_address_t)(pa - 0x9c000000ULL + SWEET_EARLY_FB_VA);
 +	}
-+#endif
++	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
++		return 0;
++	}
++#else
  	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
  		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx", __func__,
  		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
-@@ -397,6 +408,15 @@
- 			return pa - ptov_table[i].pa + ptov_table[i].va;
- 		}
++#endif
  	}
+ 	return pa - gPhysBase + gVirtBase;
+ }
+@@ -395,15 +411,30 @@
+ 				*max_len = len;
+ 			}
+ 			return pa - ptov_table[i].pa + ptov_table[i].va;
 +#if defined(SWEET)
 +	if (pa >= 0x9c000000ULL && pa < (0x9c000000ULL + ARM_TT_L2_SIZE)) {
 +		len = (0x9c000000ULL + ARM_TT_L2_SIZE) - pa;
@@ -38,10 +46,25 @@
 +		return (vm_map_address_t)(pa - 0x9c000000ULL + SWEET_EARLY_FB_VA);
 +	}
 +#endif
+ 		}
+ 	}
  	len = PAGE_SIZE - (pa & PAGE_MASK);
  	if (*max_len > len) {
  		*max_len = len;
-@@ -416,6 +436,11 @@
+ 	}
++#if defined(SWEET)
++	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
++		return 0;
++	}
++#else
+ 	if (__improbable((pa < gPhysBase) || ((pa - gPhysBase) >= real_phys_size))) {
+ 		panic("%s: illegal PA: 0x%llx; phys base 0x%llx, size 0x%llx", __func__,
+ 		    (unsigned long long)pa, (unsigned long long)gPhysBase, (unsigned long long)real_phys_size);
++#endif
+ 	}
+ 	return pa - gPhysBase + gVirtBase;
+ }
+@@ -416,6 +447,11 @@
  			return va - ptov_table[i].va + ptov_table[i].pa;
  		}
  	}
