@@ -4,13 +4,16 @@ The owner switched from UniXNU back to the ios-sweet-derived fork
 https://github.com/arbuxiktech/ios-surya and requested iOS 16 / Darwin 22 for
 Poco X3 NFC (`surya`). Work in
 `C:/Users/Arbuxik/Documents/ChatGPT/ios-surya`, branch `codex/surya-port`.
-The current checkout is `071b91a`; its latest Actions build (`39742458362`)
-failed compiling the framebuffer `phystokv` patch because its `#if` blocks
-closed after the wrong braces. That patch is corrected in the current working
-tree, along with Windows validation fixes. Local validation passes: 62 tests
-(26 skipped because this host lacks the required C/ARM toolchains), 97 patch
-files, 34 Python tools and 11 shell scripts. The corrected kernel build has
-not yet run. No device action was performed in this milestone.
+Commit `5f2055b` fixes the framebuffer `phystokv` patch's misplaced `#endif`
+and Windows validation. CI run `39823779613` passed on macOS 14 using XNU
+8796 / Darwin 22, `DEVELOPMENT`, `SURYA`; its plain arm64 kernel
+`kernel.development.surya` has SHA256
+`d0f62c2d745fcbd4d82d0a9b0cc38fe32b63a4382017d6b6203eee4820f08a54` and is
+downloaded under ignored `xnu/out/ci-39823779613/`. The CI build tree is also
+saved there. Local validation passes: 62 tests (26 skipped because this host
+lacks the required C/ARM toolchains), 97 patch files, 34 Python tools and 11
+shell scripts. This milestone built the kernel; it did not package or boot a
+new phone image.
 
 ## Current SURYA state
 
