@@ -287,7 +287,7 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
         rep->abi_version = NativeAdrenoAbiVersion;
         rep->input_bits = 39;
         rep->output_bits = 36;
-        rep->flags = NativeAdrenoParamsHostImport;
+        rep->flags = 0; /* Upstream UniXNU: disable HostImport to prevent mapping foreign non-DRAM ranges */
         rep->max_bo_bytes = UINT64_C(256) * 1024 * 1024;
         args->structureOutputSize = sizeof(NativeAdrenoAbiParams);
         return kIOReturnSuccess;
@@ -301,11 +301,15 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
         if (!req->bytes || req->bytes > (UINT64_C(256) * 1024 * 1024)) return kIOReturnBadArgument;
 
         uint64_t alloc_bytes = (req->bytes + 4095ULL) & ~4095ULL;
-        IOOptionBits opts = kIODirectionInOut;
-        if (req->contiguous) opts |= kIOMemoryPhysicallyContiguous;
+        IOOptionBits opts = kIODirectionInOut | kIOMemoryPhysicallyContiguous;
 
         IOBufferMemoryDescriptor *buf = IOBufferMemoryDescriptor::inTaskWithOptions(
             kernel_task, opts, (vm_size_t)alloc_bytes, 4096);
+        if (!buf) {
+            /* Fall back to scattered pages if physically contiguous memory is scarce */
+            buf = IOBufferMemoryDescriptor::inTaskWithOptions(
+                kernel_task, kIODirectionInOut, (vm_size_t)alloc_bytes, 4096);
+        }
         if (!buf) return kIOReturnNoMemory;
 
         IOLockLock(fLock);
@@ -336,17 +340,18 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
             return kIOReturnNotFound;
         }
 
-        IOByteCount seg_len = 0;
-        addr64_t pa = bo->desc->getPhysicalSegment(0, &seg_len);
-        if (!pa) {
-            IOLockUnlock(fLock);
-            return kIOReturnVMError;
-        }
-
-        int err = surya_adreno_smmu_map(req->iova, (uint64_t)pa, (size_t)bo->bytes, req->permissions);
-        if (err) {
-            IOLockUnlock(fLock);
-            return kIOReturnIOError;
+        for (uint64_t offset = 0; offset < bo->bytes; offset += 4096) {
+            IOByteCount seg_len = 0;
+            addr64_t pa = bo->desc->getPhysicalSegment((IOByteCount)offset, &seg_len);
+            if (!pa) {
+                IOLockUnlock(fLock);
+                return kIOReturnVMError;
+            }
+            int err = surya_adreno_smmu_map(req->iova + offset, (uint64_t)pa, 4096, req->permissions);
+            if (err) {
+                IOLockUnlock(fLock);
+                return kIOReturnIOError;
+            }
         }
 
         bo->iova = req->iova;
@@ -485,38 +490,12 @@ AGXDeviceUserClient::externalMethod(uint32_t selector, IOExternalMethodArguments
     }
 
     case NativeAdrenoMethodBoImport: {
-        if (in_size < sizeof(NativeAdrenoAbiBoImport) ||
-            args->structureOutputSize < sizeof(NativeAdrenoAbiBoAllocReply)) return kIOReturnBadArgument;
-        const NativeAdrenoAbiBoImport *req = (const NativeAdrenoAbiBoImport *)in_data;
-        NativeAdrenoAbiBoAllocReply *rep = (NativeAdrenoAbiBoAllocReply *)args->structureOutput;
-        if (!req->bytes || (req->address & 4095ULL) || (req->bytes & 4095ULL)) return kIOReturnBadArgument;
-
-        IOMemoryDescriptor *desc = IOMemoryDescriptor::withAddressRange(
-            (mach_vm_address_t)req->address, (mach_vm_size_t)req->bytes,
-            static_cast<IOOptionBits>(kIODirectionInOut) | static_cast<IOOptionBits>(kIOMemoryMapperNone), fTask);
-        if (!desc) return kIOReturnNoMemory;
-
-        IOReturn prep = desc->prepare();
-        if (prep != kIOReturnSuccess) {
-            desc->release();
-            return prep;
-        }
-
-        IOLockLock(fLock);
-        surya_adreno_bo *bo = allocBoEntry();
-        if (!bo) {
-            IOLockUnlock(fLock);
-            desc->complete();
-            desc->release();
-            return kIOReturnNoResources;
-        }
-        bo->bytes = req->bytes;
-        bo->desc = desc;
-        bo->imported = true;
-        rep->handle = bo->handle;
-        IOLockUnlock(fLock);
-        args->structureOutputSize = sizeof(NativeAdrenoAbiBoAllocReply);
-        return kIOReturnSuccess;
+        /*
+         * Upstream UniXNU reference (NativeAdrenoUserClient.cpp:406):
+         * Host memory import is unsupported. Rejecting it prevents userland from
+         * attempting to wire raw non-DRAM host memory (which trips phystokv_range panics).
+         */
+        return kIOReturnUnsupported;
     }
 
     case 0x7001: /* 0x7000 + NGP_METHOD_MODE */ {
