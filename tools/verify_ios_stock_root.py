@@ -33,7 +33,7 @@ def verify(os_root: Path, systemos_root: Path, appos_root: Path,
     expected = {}
     for label, source in sources.items():
         apps = app_bundles(source)
-        if label != 'AppOS' and not apps:
+        if label == 'OS' and not apps:
             raise ValueError(f'{label} image contains no app bundles')
         prefix = DESTINATIONS[label]
         missing = [str(prefix / relative) for relative in apps
@@ -74,7 +74,7 @@ def add_image(kind: str, image_root: Path, destination: Path,
     if kind in apps_by_image:
         raise ValueError(f'{kind} was already added to this root image')
     apps = app_bundles(image_root)
-    if kind != 'AppOS' and not apps:
+    if kind == 'OS' and not apps:
         raise ValueError(f'{kind} image contains no stock .app bundles')
     prefix = DESTINATIONS[kind]
     missing = [str(prefix / relative) for relative in apps

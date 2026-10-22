@@ -9,6 +9,24 @@ import verify_ios_stock_root
 
 
 class StockRootTests(unittest.TestCase):
+    def test_systemos_cryptex_without_app_bundles_is_still_inventoried(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            source = base / 'source'
+            destination = base / 'root'
+            inventory = base / 'inventory.json'
+            (source / 'System/Library/Frameworks').mkdir(parents=True)
+            (source / 'System/Library/Frameworks/fixture').write_bytes(b'fixture')
+            target = destination / verify_ios_stock_root.DESTINATIONS['SystemOS']
+            (target / 'System/Library/Frameworks').mkdir(parents=True)
+            (target / 'System/Library/Frameworks/fixture').write_bytes(b'fixture')
+
+            result = verify_ios_stock_root.add_image(
+                'SystemOS', source, destination, inventory)
+
+            self.assertEqual(result['app_bundles'], 0)
+            self.assertEqual(result['total_app_bundles'], 0)
+
     def test_appos_cryptex_without_app_bundles_is_still_inventoried(self):
         with tempfile.TemporaryDirectory() as temporary:
             base = Path(temporary)
