@@ -19,6 +19,7 @@ new phone image.
 
 ### Active handoff: eight-core GUI, IPSW stock apps, and graphics audit (2026-10-22)
 
+- For transfer to the Hackintosh, start at `docs/hackintosh-handoff.md`; the Windows-side staging folder includes the full repository and external `surya-drivers` assets.
 - The owner reports the latest Apple-root boot with `cpus=8` reached the Lock Screen/home screen. The payload includes all eight SM7150 CPU nodes and MPIDR values 0x0 through 0x700. This confirms the eight-core configuration boots into the GUI; no live per-core online counter was captured. Apple-root profiles now default to `cpus=8`, with `--cpus 1` retained as an explicit fallback.
 - Current working-tree validation: 75 tests pass (26 skipped because this Windows host lacks the C/ARM compiler tooling), all 97 patch files validate, all 40 Python tools compile, all 12 shell scripts pass syntax checks, workflow YAML parses, and `git diff --check` is clean.
 - Local IPSW: `C:/Users/Arbuxik/Documents/ChatGPT/surya-drivers/ipsw/iPhone10,3_iOS16.7.16_20H392_Restore.ipsw`, SHA256 `ece1194f7e233e9109c5790a8d23a4564a10a254e15ec5b09978a343265568fb`. `tools/extract_ios16_root_images.py --inspect-only` selected the case-insensitive `d22ap` erase identity and validated OS, SystemOS and AppOS manifest paths and SHA-384 digests. The images are present under `surya-drivers/ipsw/extracted-20H392/`.
