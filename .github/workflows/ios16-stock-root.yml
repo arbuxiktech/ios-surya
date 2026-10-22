@@ -103,6 +103,18 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          name: ios16-input-os-20H392
+          path: out/input-os
+
+      # Copy the base OS before its cryptex overlays so per-image checksum
+      # verification sees the IPSW tree without files from the other images.
+      - name: Add OS applications and framework files
+        run: |
+          bash tools/mkiosroot-macos.sh add OS out/input-os/OS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
+          rm -rf out/input-os
+
+      - uses: actions/download-artifact@v4
+        with:
           name: ios16-input-appos-20H392
           path: out/input-appos
 
@@ -120,16 +132,6 @@ jobs:
         run: |
           bash tools/mkiosroot-macos.sh add SystemOS out/input-systemos/SystemOS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
           rm -rf out/input-systemos
-
-      - uses: actions/download-artifact@v4
-        with:
-          name: ios16-input-os-20H392
-          path: out/input-os
-
-      - name: Add OS applications and framework files
-        run: |
-          bash tools/mkiosroot-macos.sh add OS out/input-os/OS.dmg out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
-          rm -rf out/input-os
 
       - name: Finalize and verify the stock app root
         run: bash tools/mkiosroot-macos.sh finalize out/ios16-root-20H392.sparsebundle out/ios16-root-20H392-stock-app-inventory.json
