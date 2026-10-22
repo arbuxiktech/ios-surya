@@ -41,7 +41,9 @@ Updated 2026-10-22. Read this first, then read the active handoff at the top of
   status and logs before proceeding.
 - Do not claim the stock apps are restored until that run publishes a verified
   root artifact and inventory. The artifact is a sparsebundle, not a
-  fastboot-ready image. No partition was flashed for this root-image work.
+  fastboot-ready image. At handoff packaging, the extract job had succeeded and
+  the build job was still downloading the OS artifact. No partition was
+  flashed for this root-image work.
 
 ## GPU / Mesa / Metal findings
 
